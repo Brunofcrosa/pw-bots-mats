@@ -5,6 +5,8 @@ public class Entity {
     private float x, y, z;
     private int type;
     private float distance;
+    private int hp;
+    private int maxHp;
 
     public Entity(int id, float x, float y, float z, int type) {
         this.id = id;
@@ -26,4 +28,9 @@ public class Entity {
     public float getX() { return x; }
     public float getY() { return y; }
     public float getZ() { return z; }
+
+    public int getHp() { return hp; }
+    public void setHp(int hp) { this.hp = hp; }
+    public int getMaxHp() { return maxHp; }
+    public void setMaxHp(int maxHp) { this.maxHp = maxHp; }
 }

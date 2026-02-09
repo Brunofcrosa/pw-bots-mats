@@ -68,6 +68,12 @@ public class WinMemoryReader {
         return 0;
     }
 
+    public boolean writeInt(long address, int value) {
+        Memory mem = new Memory(4);
+        mem.setInt(0, value);
+        return Kernel32.INSTANCE.WriteProcessMemory(processHandle, new Pointer(address), mem, 4, null);
+    }
+
     public float readFloat(long address) {
         Memory mem = new Memory(4);
         if (Kernel32.INSTANCE.ReadProcessMemory(processHandle, new Pointer(address), mem, 4, null)) {
