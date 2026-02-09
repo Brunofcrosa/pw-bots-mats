@@ -29,23 +29,17 @@ public class BotController {
         switch (currentState) {
             case IDLE:
                 System.out.println("IDLE: Procurando alvo...");
-                // Logic to find nearest entity
-                // If found -> currentState = State.MOVING;
-                // For demo, let's just create a mock transition
                 currentState = State.MOVING;
                 break;
 
             case MOVING:
                 System.out.println("MOVING: Indo até o alvo...");
                 input.sendKey(GameConstants.WINDOW_NAME, InputSimulator.Keys.VK_W, 100);
-                // Check distance... if close -> currentState = State.COLLECTING;
                 currentState = State.COLLECTING; 
                 break;
 
             case COLLECTING:
                 System.out.println("COLLECTING: Coletando...");
-                // Send interact key (maybe capture mouse or specific key)
-                // input.sendKey(..., VK_F1, ...);
                 try { Thread.sleep(2000); } catch (Exception e) {}
                 currentState = State.COOLDOWN;
                 break;

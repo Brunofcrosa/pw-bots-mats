@@ -4,8 +4,9 @@ import com.bot.memory.WinMemoryReader;
 import com.bot.constants.GameConstants;
 
 public class Player {
+    private String name;
     private float x, y, z;
-    private int hp, maxHp, mp;
+    private int hp, maxHp, mp, maxMp, level;
 
     public void update(WinMemoryReader memory, long moduleBase) {
         long staticAddress = moduleBase + GameConstants.BASE_OFFSET;
@@ -13,16 +14,19 @@ public class Player {
 
         if (pointerLocation == 0) return;
 
-        // Lê o valor (ESI) contido no ponteiro final da cadeia
         long playerStructAddress = memory.readInt(pointerLocation) & 0xFFFFFFFFL;
 
         if (playerStructAddress != 0) {
-            this.x = memory.readFloat(playerStructAddress + GameConstants.OFFSET_X);
-            this.y = memory.readFloat(playerStructAddress + GameConstants.OFFSET_Y);
-            this.z = memory.readFloat(playerStructAddress + GameConstants.OFFSET_Z);
+            this.name = memory.readStringFromPointer(playerStructAddress, GameConstants.OFFSET_NAME_PTR);
+            this.level = memory.readInt(playerStructAddress + GameConstants.OFFSET_LEVEL);
             this.hp = memory.readInt(playerStructAddress + GameConstants.OFFSET_HP);
             this.mp = memory.readInt(playerStructAddress + GameConstants.OFFSET_MP);
             this.maxHp = memory.readInt(playerStructAddress + GameConstants.OFFSET_MAX_HP);
+            this.maxMp = memory.readInt(playerStructAddress + GameConstants.OFFSET_MAX_MP);
+
+            this.x = memory.readFloat(playerStructAddress + GameConstants.OFFSET_X);
+            this.y = memory.readFloat(playerStructAddress + GameConstants.OFFSET_Y);
+            this.z = memory.readFloat(playerStructAddress + GameConstants.OFFSET_Z);
         }
     }
 
@@ -33,6 +37,7 @@ public class Player {
 
     @Override
     public String toString() {
-        return String.format("Player [HP: %d/%d | Pos: %.2f, %.2f, %.2f]", hp, maxHp, x, y, z);
+        return String.format("%s [Lvl: %d | HP: %d/%d | MP: %d/%d | Pos: %.2f, %.2f, %.2f]",
+                name, level, hp, maxHp, mp, maxMp, x, y, z);
     }
 }

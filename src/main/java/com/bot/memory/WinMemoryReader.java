@@ -32,11 +32,7 @@ public class WinMemoryReader {
         return this.processHandle != null;
     }
 
-    /**
-     * Localiza o endereço base do módulo especificado usando Toolhelp32Snapshot.
-     */
     public long getModuleBaseAddress(String moduleName) {
-        // CORREÇÃO: Extraímos o valor long de cada DWORD para usar o operador '|'
         WinDef.DWORD dwFlags = new WinDef.DWORD(
                 Tlhelp32.TH32CS_SNAPMODULE.longValue() | Tlhelp32.TH32CS_SNAPMODULE32.longValue()
         );
@@ -78,6 +74,20 @@ public class WinMemoryReader {
             return mem.getFloat(0);
         }
         return 0.0f;
+    }
+
+    public String readString(long address, int maxLength) {
+        Memory mem = new Memory(maxLength * 2L);
+        if (Kernel32.INSTANCE.ReadProcessMemory(processHandle, new Pointer(address), mem, (int) mem.size(), null)) {
+            return mem.getWideString(0);
+        }
+        return "Unknown";
+    }
+
+    public String readStringFromPointer(long baseAddress, int offset) {
+        long namePtr = readInt(baseAddress + offset) & 0xFFFFFFFFL;
+        if (namePtr == 0) return "Unknown";
+        return readString(namePtr, 64);
     }
 
     public long readPointerAddress(long baseAddress, int[] offsets) {
