@@ -1,0 +1,11 @@
+com\bot\input\InputSimulator$User32Ext.class
+com\bot\input\InputSimulator$Keys.class
+com\bot\Main.class
+com\bot\model\Entity.class
+com\bot\logic\BotController$1.class
+com\bot\constants\GameConstants.class
+com\bot\memory\WinMemoryReader.class
+com\bot\input\InputSimulator.class
+com\bot\model\Player.class
+com\bot\logic\BotController.class
+com\bot\logic\BotController$State.class
