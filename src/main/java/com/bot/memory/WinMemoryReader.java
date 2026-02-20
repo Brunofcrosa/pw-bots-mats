@@ -18,7 +18,11 @@ public class WinMemoryReader {
 
     public boolean openProcess(String windowName) {
         HWND hwnd = User32.INSTANCE.FindWindow(null, windowName);
-        if (hwnd == null) return false;
+        if (hwnd == null) {
+            // Tenta buscar por parte do nome se a busca exata falhar
+            System.out.println("Janela não encontrada: " + windowName);
+            return false;
+        }
 
         IntByReference pidRef = new IntByReference();
         User32.INSTANCE.GetWindowThreadProcessId(hwnd, pidRef);
@@ -29,6 +33,10 @@ public class WinMemoryReader {
                 false,
                 pid
         );
+
+        if (this.processHandle == null) {
+            System.err.println("Falha ao abrir handle do processo. Execute como Administrador.");
+        }
         return this.processHandle != null;
     }
 
@@ -66,6 +74,12 @@ public class WinMemoryReader {
             return mem.getInt(0);
         }
         return 0;
+    }
+
+    public boolean writeInt(long address, int value) {
+        Memory mem = new Memory(4);
+        mem.setInt(0, value);
+        return Kernel32.INSTANCE.WriteProcessMemory(processHandle, new Pointer(address), mem, 4, null);
     }
 
     public float readFloat(long address) {

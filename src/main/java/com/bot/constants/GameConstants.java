@@ -14,5 +14,10 @@ public class GameConstants {
     public static final int OFFSET_X = 0x3C;
     public static final int OFFSET_Z = 0x40;
     public static final int OFFSET_Y = 0x44;
+    public static final int OFFSET_ID = 0x4EC;
+    public static final int OFFSET_TYPE = 0xB4;
+    public static final int OFFSET_TARGET_ID = 0x510;
     public static final int[] ENTITY_LIST_CHAIN = { 0x1C, 0x24 };
+    public static final int TYPE_MOB = 6;
+    public static final int TYPE_MATERIAL = 7;
 }
