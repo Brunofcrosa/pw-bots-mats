@@ -5,9 +5,9 @@ public class GameConstants {
     public static final String WINDOW_NAME = "The Classic PW 1.2.6";
     public static final long BASE_OFFSET = 0xA4129C;
     public static final int[] PLAYER_STRUCTURE_CHAIN = { 0x2C };
-    public static final int OFFSET_NAME_PTR = 0x230;
+    public static final int OFFSET_NAME_PTR = 0x6E0;
     public static final int OFFSET_ID = 0x4EC;
-    public static final int OFFSET_LEVEL = 0x4B0;
+    public static final int OFFSET_LEVEL = 0x4F8;
     public static final int OFFSET_TYPE = 0xB4;
     public static final int OFFSET_HP = 0x518;
     public static final int OFFSET_MP = 0x51C;
