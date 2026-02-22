@@ -8,7 +8,6 @@ import com.sun.jna.platform.win32.WinDef.WPARAM;
 import com.sun.jna.win32.StdCallLibrary;
 
 public class InputSimulator {
-
     public interface User32Ext extends StdCallLibrary {
         User32Ext INSTANCE = Native.load("user32", User32Ext.class);
         boolean PostMessageA(HWND hWnd, int msg, WPARAM wParam, LPARAM lParam);
@@ -27,13 +26,7 @@ public class InputSimulator {
         LPARAM lUp = new LPARAM(1 | (scanCode << 16) | (1 << 30) | (1 << 31));
 
         User32Ext.INSTANCE.PostMessageA(hwnd, WM_KEYDOWN, new WPARAM(keyCode), lDown);
-
-        try {
-            Thread.sleep(durationMs);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-
+        try { Thread.sleep(durationMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         User32Ext.INSTANCE.PostMessageA(hwnd, WM_KEYUP, new WPARAM(keyCode), lUp);
     }
 

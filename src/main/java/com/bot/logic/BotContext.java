@@ -13,27 +13,20 @@ public class BotContext {
     private final EntityManager entityManager;
     private final Player player;
     private final long moduleBase;
+    private final WaypointManager waypointManager;
 
-    public BotContext(WinMemoryReader memory, InputSimulator input, Player player, EntityManager entityManager, long moduleBase) {
-        this.memory = memory;
-        this.input = input;
-        this.player = player;
-        this.entityManager = entityManager;
-        this.moduleBase = moduleBase;
-        this.currentState = new IdleState();
+    public BotContext(WinMemoryReader memory, InputSimulator input, Player player, EntityManager entityManager, long moduleBase, WaypointManager waypointManager) {
+        this.memory = memory; this.input = input; this.player = player;
+        this.entityManager = entityManager; this.moduleBase = moduleBase;
+        this.waypointManager = waypointManager; this.currentState = new IdleState();
     }
 
-    public void update() {
-        currentState.execute(this);
-    }
-
-    public void setState(BotState newState) {
-        this.currentState = newState;
-    }
-
+    public void update() { currentState.execute(this); }
+    public void setState(BotState newState) { this.currentState = newState; }
     public WinMemoryReader getMemory() { return memory; }
     public InputSimulator getInput() { return input; }
     public Player getPlayer() { return player; }
     public EntityManager getEntityManager() { return entityManager; }
     public long getModuleBase() { return moduleBase; }
+    public WaypointManager getWaypointManager() { return waypointManager; }
 }

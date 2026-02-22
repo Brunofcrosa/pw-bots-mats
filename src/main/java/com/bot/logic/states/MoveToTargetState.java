@@ -17,15 +17,10 @@ public class MoveToTargetState implements BotState {
     @Override
     public void execute(BotContext ctx) {
         target.calculateDistance(ctx.getPlayer());
-
         if (target.getDistance() > 3.5f) {
             ctx.getInput().sendKey(GameConstants.WINDOW_NAME, Keys.VK_W, 150);
         } else {
-            if (isMaterial) {
-                ctx.setState(new CollectionState());
-            } else {
-                ctx.setState(new CombatState());
-            }
+            ctx.setState(isMaterial ? new CollectionState() : new CombatState());
         }
     }
 }
