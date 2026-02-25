@@ -110,7 +110,12 @@ public class EntityManager {
                     ResourceSpawn sp = resourceDb.matchToSpawn(e.getX(), e.getY(), e.getZ());
                     if (sp != null) {
                         float md = sp.distanceTo(e.getX(), e.getY(), e.getZ());
-                        matchInfo = String.format(" dbMatch=%s(%.0fm)", sp.getName(), md);
+                        int types = resourceDb.countTypesAtPosition(e.getX(), e.getY(), e.getZ());
+                        if (types > 1) {
+                            matchInfo = String.format(" dbMatch=%s(%.0fm, %d types at spawn)", sp.getCategory(), md, types);
+                        } else {
+                            matchInfo = String.format(" dbMatch=%s(%.0fm)", sp.getName(), md);
+                        }
                     } else if (smallIdToName.containsKey(sid)) {
                         matchInfo = String.format(" idMatch=sid%d->%s", sid, smallIdToName.get(sid));
                     } else {
@@ -209,6 +214,7 @@ public class EntityManager {
                 logInfo(String.format("[SCAN]   step1+0x%X arr=0x%X cnt=0x%X", ch[0], ch[1], ch[2]));
             }
             probeNamesOnChain(step1, player);
+            hexDumpResourceEntities(step1, player);
         } else {
             logInfo("[SCAN] Nenhuma resource chain encontrada via step1");
         }
@@ -300,6 +306,105 @@ public class EntityManager {
             }
         }
         return found;
+    }
+
+    /**
+     * Hex dump of resource entity fields to find the template ID offset.
+     * Dumps int values at every 4 bytes from 0x00 to 0x200 for up to 4 entities,
+     * then highlights offsets where values DIFFER between entities (potential type discriminators).
+     */
+    private void hexDumpResourceEntities(long step1, Player player) {
+        if (resChains.isEmpty()) return;
+        int[] ch = resChains.get(0);
+        long resMgr = readPtr(step1 + ch[0]);
+        if (resMgr < MIN_PTR) return;
+        long arr = readPtr(resMgr + ch[1]);
+        int cnt = memory.readInt(resMgr + ch[2]);
+        if (arr < MIN_PTR || cnt <= 0) return;
+
+        logInfo("[SCAN] --- Hex dump of resource entities (finding template ID offset) ---");
+
+        // Collect entities sorted by distance
+        List<long[]> entities = new ArrayList<>(); // {ep, dist*100}
+        for (int i = 0; i < Math.min(cnt, 30); i++) {
+            long ep = readPtr(arr + (long) i * 4);
+            if (ep < MIN_PTR) continue;
+            float x = memory.readFloat(ep + 0x3C);
+            float y = memory.readFloat(ep + 0x40);
+            float z = memory.readFloat(ep + 0x44);
+            if (!isValidPos(x, y, z)) continue;
+            float d = dist3D(x, y, z, player);
+            if (d > 150.0f) continue;
+            entities.add(new long[]{ep, (long)(d * 100)});
+        }
+        entities.sort(Comparator.comparingLong(a -> a[1]));
+        int dumpCount = Math.min(entities.size(), 4);
+        if (dumpCount < 2) {
+            logInfo("[SCAN] Not enough resource entities for comparison dump");
+            return;
+        }
+
+        // Read all int values 0x00-0x200 for each entity
+        int maxOff = 0x200;
+        int slots = maxOff / 4;
+        int[][] values = new int[dumpCount][slots];
+        long[] eps = new long[dumpCount];
+
+        for (int e = 0; e < dumpCount; e++) {
+            eps[e] = entities.get(e)[0];
+            for (int s = 0; s < slots; s++) {
+                values[e][s] = memory.readInt(eps[e] + (long) s * 4);
+            }
+        }
+
+        // Dump a concise comparison: only offsets where values differ between entities
+        // (excluding known positional fields at 0x3C-0x44)
+        StringBuilder diffLog = new StringBuilder("[HEXDIFF] Offsets where entities differ:\n");
+        int diffCount = 0;
+        for (int s = 0; s < slots; s++) {
+            int off = s * 4;
+            if (off >= 0x3C && off <= 0x44) continue; // skip position
+            boolean allSame = true;
+            for (int e = 1; e < dumpCount; e++) {
+                if (values[e][s] != values[0][s]) {
+                    allSame = false;
+                    break;
+                }
+            }
+            if (!allSame) {
+                diffCount++;
+                StringBuilder line = new StringBuilder(String.format("  +0x%03X:", off));
+                for (int e = 0; e < dumpCount; e++) {
+                    int v = values[e][s];
+                    // Show as int and hex, and as float if it looks like a reasonable float
+                    float f = Float.intBitsToFloat(v);
+                    if (!Float.isNaN(f) && !Float.isInfinite(f) && Math.abs(f) > 0.001f && Math.abs(f) < 100000f) {
+                        line.append(String.format(" [e%d=%d(0x%X)(%.2f)]", e, v, v, f));
+                    } else {
+                        line.append(String.format(" [e%d=%d(0x%X)]", e, v, v));
+                    }
+                }
+                diffLog.append(line).append("\n");
+            }
+        }
+
+        // Header showing which entities we're comparing
+        for (int e = 0; e < dumpCount; e++) {
+            float d = entities.get(e)[1] / 100.0f;
+            logInfo(String.format("[HEXDUMP] e%d: ep=0x%X dist=%.1f sid=%d",
+                    e, eps[e], d, values[e][1])); // slot 1 = offset +0x04 = smallId
+        }
+        logInfo(String.format("[HEXDIFF] %d offsets differ out of %d (0x00-0x%X, excl pos)",
+                diffCount, slots, maxOff));
+        if (diffCount > 0 && diffCount <= 40) {
+            logInfo(diffLog.toString());
+        } else if (diffCount > 40) {
+            logInfo("[HEXDIFF] Too many diffs (" + diffCount + "), showing first 20:");
+            String[] lines = diffLog.toString().split("\n");
+            for (int i = 0; i < Math.min(lines.length, 21); i++) {
+                logInfo(lines[i]);
+            }
+        }
     }
 
     private void probeNamesOnChain(long step1, Player player) {
@@ -570,14 +675,19 @@ public class EntityManager {
 
         // Identify material by position matching against known spawn database
         if (type != GameConstants.TYPE_MOB && resourceDb != null) {
-            ResourceSpawn sp = resourceDb.matchToSpawn(x, y, z);
-            if (sp != null) {
-                ent.setName(sp.getName());
-                ent.setTemplateId(sp.getTemplateId());
-                // Learn this smallId → name mapping for future propagation
-                if (smallId > 0 && smallId < 0x10000) {
-                    smallIdToName.put(smallId, sp.getName());
-                    smallIdToTemplateId.put(smallId, sp.getTemplateId());
+            // Use smart identification: returns category name when multiple types
+            // share the same spawn point (e.g., "Erva Lv1" instead of always "Nectar")
+            String smartName = resourceDb.smartIdentify(x, y, z);
+            if (smartName != null) {
+                ent.setName(smartName);
+                ResourceSpawn sp = resourceDb.matchToSpawn(x, y, z);
+                if (sp != null) {
+                    ent.setTemplateId(sp.getTemplateId());
+                    // Learn this smallId → category mapping for propagation
+                    if (smallId > 0 && smallId < 0x10000) {
+                        smallIdToName.put(smallId, smartName);
+                        smallIdToTemplateId.put(smallId, sp.getTemplateId());
+                    }
                 }
             } else {
                 // Try to read template ID from entity memory for ID-based lookup

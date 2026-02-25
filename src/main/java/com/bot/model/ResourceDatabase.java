@@ -185,6 +185,34 @@ public class ResourceDatabase {
     }
 
     /**
+     * Find ALL spawns at the same location as the nearest match (within 1m of each
+     * other). In PW, multiple resource types can share the same spawn point.
+     * Returns empty list if no spawn found within 80m.
+     */
+    public List<ResourceSpawn> findAllAtPosition(float ex, float ey, float ez) {
+        ResourceSpawn nearest = matchToSpawn(ex, ey, ez);
+        if (nearest == null) return Collections.emptyList();
+        List<ResourceSpawn> result = new ArrayList<>();
+        for (ResourceSpawn sp : allSpawns) {
+            if (nearest.distanceTo(sp.getX(), sp.getY(), sp.getZ()) < 1.0f) {
+                result.add(sp);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Check if a spawn position has multiple resource types.
+     * Returns the number of distinct types at the same location.
+     */
+    public int countTypesAtPosition(float ex, float ey, float ez) {
+        List<ResourceSpawn> all = findAllAtPosition(ex, ey, ez);
+        Set<String> names = new HashSet<>();
+        for (ResourceSpawn sp : all) names.add(sp.getName());
+        return names.size();
+    }
+
+    /**
      * Get the resource name for a detected entity by matching its position.
      * Returns "Desconhecido" if no match found.
      */
@@ -194,11 +222,35 @@ public class ResourceDatabase {
     }
 
     /**
+     * Smart identify: if the spawn has multiple types, return "Category LvX" instead
+     * of a specific name, since we can't distinguish from position alone.
+     */
+    public String smartIdentify(float ex, float ey, float ez) {
+        List<ResourceSpawn> all = findAllAtPosition(ex, ey, ez);
+        if (all.isEmpty()) return null;
+        if (all.size() == 1) return all.get(0).getName();
+        // Multiple types at same spawn — use category + level
+        Set<String> names = new LinkedHashSet<>();
+        for (ResourceSpawn sp : all) names.add(sp.getName());
+        if (names.size() == 1) return all.get(0).getName();
+        // Return category name like "Erva Lv1"
+        return all.get(0).getCategory() + " Lv" + all.get(0).getLevel();
+    }
+
+    /**
      * Get template name by ID.
      */
     public static String getNameById(int templateId) {
         String[] tpl = TEMPLATES.get(templateId);
         return tpl != null ? tpl[0] : null;
+    }
+
+    /**
+     * Get category + level string by template ID.
+     */
+    public static String getCategoryById(int templateId) {
+        String[] tpl = TEMPLATES.get(templateId);
+        return tpl != null ? tpl[1] + " Lv" + tpl[2] : null;
     }
 
     /**
