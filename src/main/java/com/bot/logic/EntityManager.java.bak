@@ -1,0 +1,568 @@
+package com.bot.logic;
+
+import com.bot.constants.BotSettings;
+import com.bot.constants.GameConstants;
+import com.bot.memory.WinMemoryReader;
+import com.bot.model.Entity;
+import com.bot.model.Player;
+import java.util.*;
+
+/**
+ * Deep-diagnostic entity manager. Dumps raw memory to discover correct
+ * offsets for entity structures in this PW server version.
+ */
+public class EntityManager {
+    private final WinMemoryReader memory;
+    private final long dynamicBaseAddress;
+
+    private final Map<Integer, Entity> mobCache = new HashMap<>();
+    private final Map<Integer, Entity> materialCache = new HashMap<>();
+
+    private int tickCount = 0;
+    private boolean diagDone = false;
+
+    // Discovered working offsets (populated by diagnostic)
+    private int discPosOff = -1;   // offset to X float (Y = +4, Z = +8)
+    private int discIdOff = -1;    // offset to entity ID int
+    private int discTypeOff = -1;  // offset to entity type int
+
+    // Discovered working array source
+    private long discArrayAddr = 0;
+    private int discArrayCount = 0;
+    private String discSource = null;
+
+    // For NPC manager based detection
+    private long discManagerAddr = 0;
+    private int discMgrArrayOff = -1;
+    private int discMgrCountOff = -1;
+
+    private static final float MAX_DIST = 300.0f;
+    private static final long MIN_PTR = 0x10000L;
+
+    public EntityManager(WinMemoryReader memory, long dynamicBaseAddress) {
+        this.memory = memory;
+        this.dynamicBaseAddress = dynamicBaseAddress;
+    }
+
+    public void update(long moduleBase, Player player) {
+        tickCount++;
+
+        // Run deep diagnostic on first tick and every ~15s if nothing found
+        if (!diagDone || (materialCache.isEmpty() && mobCache.isEmpty() && tickCount % 150 == 0)) {
+            runDeepDiagnostic(moduleBase, player);
+        }
+
+        // Normal operation if we discovered offsets
+        if (discPosOff >= 0 && discSource != null) {
+            runNormalScan(moduleBase, player);
+        }
+
+        // Status log every ~5s
+        if (tickCount % 50 == 1) {
+            Entity nearMat = getNearestMaterial();
+            Entity nearMob = getNearestMob();
+            logInfo(String.format("[STATUS] pos=(%.1f,%.1f,%.1f) mobs=%d mats=%d nearMat=%.1fm nearMob=%.1fm",
+                player.getX(), player.getY(), player.getZ(),
+                mobCache.size(), materialCache.size(),
+                nearMat != null ? nearMat.getDistance() : -1f,
+                nearMob != null ? nearMob.getDistance() : -1f));
+        }
+    }
+
+    // =======================================================================
+    // DEEP DIAGNOSTIC — discovers entity structure offsets
+    // =======================================================================
+
+    private void runDeepDiagnostic(long moduleBase, Player player) {
+        diagDone = true;
+        logInfo("===== DIAGNOSTICO PROFUNDO =====");
+        logInfo(String.format("[DIAG] Player pos=(%.1f, %.1f, %.1f) id=%d",
+            player.getX(), player.getY(), player.getZ(), player.getId()));
+
+        long staticAddr = moduleBase + GameConstants.BASE_OFFSET;
+
+        // --- Step 1: Trace entity list chain step-by-step ---
+        logInfo("[DIAG] === Fase 1: Cadeia de entidades ===");
+        logInfo(String.format("[DIAG] staticAddr = moduleBase(0x%X) + 0x%X = 0x%X",
+            moduleBase, GameConstants.BASE_OFFSET, staticAddr));
+
+        long rootVal = memory.readInt(staticAddr) & 0xFFFFFFFFL;
+        logInfo(String.format("[DIAG] [staticAddr] = 0x%X", rootVal));
+
+        int[] chain = GameConstants.ENTITY_LIST_CHAIN; // {0x1C, 0x1C, 0x24}
+        long current = rootVal;
+        for (int i = 0; i < chain.length; i++) {
+            if (current < MIN_PTR) {
+                logWarn(String.format("[DIAG] Cadeia quebrou no passo %d: ptr=0x%X", i, current));
+                break;
+            }
+            long next = memory.readInt(current + chain[i]) & 0xFFFFFFFFL;
+            logInfo(String.format("[DIAG] [0x%X + 0x%X] = 0x%X", current, chain[i], next));
+            current = next;
+        }
+
+        long managerCandidate = current;
+        if (managerCandidate >= MIN_PTR) {
+            logInfo(String.format("[DIAG] Manager candidate: 0x%X", managerCandidate));
+            dumpManagerStructure(managerCandidate, player, "ENTITY_MGR");
+        } else {
+            logWarn("[DIAG] Entity list chain nao resolveu. Tentando chains alternativos...");
+            // Try to find the manager by probing different first-level offsets from rootVal
+            if (rootVal >= MIN_PTR) {
+                tryAlternativeManagerChains(rootVal, player);
+            }
+        }
+
+        // --- Step 2: Trace matter base chain ---
+        logInfo("[DIAG] === Fase 2: Matter base offset ===");
+        long matterStatic = moduleBase + GameConstants.MATTER_BASE_OFFSET;
+        long matterRoot = memory.readInt(matterStatic) & 0xFFFFFFFFL;
+        logInfo(String.format("[DIAG] matterStatic=0x%X [matterStatic]=0x%X", matterStatic, matterRoot));
+
+        if (matterRoot >= MIN_PTR) {
+            logInfo("[DIAG] Dump do matterRoot (offsets 0x00-0x100):");
+            dumpIntRange(matterRoot, 0x00, 0x100);
+            // Scan all offsets for arrays of valid entity pointers
+            scanForEntityArrays(matterRoot, player, "MATTER_ROOT");
+        }
+
+        // --- Step 3: Try the root context itself for entity arrays ---
+        logInfo("[DIAG] === Fase 3: Root context brute-force ===");
+        if (rootVal >= MIN_PTR) {
+            // Walk level1 offsets from root
+            int bestHits = 0;
+            for (int off1 = 0x04; off1 <= 0x100; off1 += 4) {
+                long lv1 = memory.readInt(rootVal + off1) & 0xFFFFFFFFL;
+                if (lv1 < MIN_PTR) continue;
+                // Check if lv1 itself is a manager (has array+count somewhere)
+                int hits = quickArrayCheck(lv1, player);
+                if (hits > bestHits) {
+                    bestHits = hits;
+                    logInfo(String.format("[DIAG] rootVal+0x%X -> 0x%X tem %d hits", off1, lv1, hits));
+                    if (hits >= 2) {
+                        dumpManagerStructure(lv1, player, "LV1_0x" + Integer.toHexString(off1));
+                    }
+                }
+                // Go one level deeper
+                for (int off2 = 0x04; off2 <= 0x100; off2 += 4) {
+                    long lv2 = memory.readInt(lv1 + off2) & 0xFFFFFFFFL;
+                    if (lv2 < MIN_PTR) continue;
+                    int hits2 = quickArrayCheck(lv2, player);
+                    if (hits2 >= 2 && hits2 > 1) {
+                        logInfo(String.format("[DIAG] rootVal+0x%X+0x%X -> 0x%X tem %d hits",
+                            off1, off2, lv2, hits2));
+                        if (hits2 >= 3) {
+                            dumpManagerStructure(lv2, player, "LV2_0x" + Integer.toHexString(off1) + "_0x" + Integer.toHexString(off2));
+                        }
+                    }
+                }
+            }
+        }
+
+        logInfo("===== FIM DIAGNOSTICO =====");
+    }
+
+    private void tryAlternativeManagerChains(long rootVal, Player player) {
+        int[][] altChains = {
+            {0x1C, 0x1C, 0x24}, {0x1C, 0x1C, 0x20}, {0x1C, 0x1C, 0x28},
+            {0x1C, 0x1C, 0x1C}, {0x1C, 0x1C, 0x30},
+            {0x1C, 0x18, 0x24}, {0x1C, 0x20, 0x24},
+            {0x18, 0x1C, 0x24}, {0x18, 0x18, 0x24},
+            {0x20, 0x1C, 0x24}, {0x20, 0x20, 0x24},
+            {0x1C, 0x1C}, {0x1C, 0x18}, {0x1C, 0x20},
+            {0x18, 0x1C}, {0x18, 0x18},
+        };
+
+        for (int[] alt : altChains) {
+            long cur = rootVal;
+            boolean ok = true;
+            for (int off : alt) {
+                cur = memory.readInt(cur + off) & 0xFFFFFFFFL;
+                if (cur < MIN_PTR) { ok = false; break; }
+            }
+            if (!ok) continue;
+
+            int hits = quickArrayCheck(cur, player);
+            if (hits >= 2) {
+                logInfo(String.format("[DIAG] Alt chain %s -> 0x%X com %d hits!",
+                    Arrays.toString(alt), cur, hits));
+                dumpManagerStructure(cur, player, "ALT_" + Arrays.toString(alt));
+            }
+        }
+    }
+
+    /**
+     * Quick check: how many valid entity pointers can we find in arrays within this struct?
+     */
+    private int quickArrayCheck(long structAddr, Player player) {
+        int bestHits = 0;
+        for (int off = 0x00; off <= 0xC0; off += 4) {
+            long arr = memory.readInt(structAddr + off) & 0xFFFFFFFFL;
+            if (arr < MIN_PTR || arr == structAddr) continue;
+            int cnt = memory.readInt(structAddr + off + 4);
+            if (cnt <= 0 || cnt > 2000) continue;
+            int hits = countValidEntityPtrs(arr, Math.min(cnt, 16), player);
+            if (hits > bestHits) bestHits = hits;
+        }
+        return bestHits;
+    }
+
+    /**
+     * Count pointers in array where the pointed structure has float-like coords near player.
+     * Uses AUTO-DETECTION: scans multiple candidate offsets for position floats.
+     */
+    private int countValidEntityPtrs(long arrayAddr, int count, Player player) {
+        int hits = 0;
+        for (int i = 0; i < count; i++) {
+            long ep = memory.readInt(arrayAddr + ((long) i * 4)) & 0xFFFFFFFFL;
+            if (ep < MIN_PTR || ep % 4 != 0) continue;
+            // Scan the entity structure for floats near player position
+            if (findPositionInStruct(ep, player) >= 0) {
+                hits++;
+            }
+        }
+        return hits;
+    }
+
+    /**
+     * Scans all 4-byte aligned offsets in entity struct (0x00 to 0x200) looking for
+     * three consecutive floats that match a plausible world position (near player).
+     * Returns the offset of X, or -1 if not found.
+     */
+    private int findPositionInStruct(long entityPtr, Player player) {
+        float px = player.getX();
+        float py = player.getY();
+        float pz = player.getZ();
+
+        for (int off = 0; off <= 0x200; off += 4) {
+            float v1 = memory.readFloat(entityPtr + off);
+            float v2 = memory.readFloat(entityPtr + off + 4);
+            float v3 = memory.readFloat(entityPtr + off + 8);
+
+            if (Float.isNaN(v1) || Float.isNaN(v2) || Float.isNaN(v3)) continue;
+            if (v1 == 0f && v2 == 0f && v3 == 0f) continue;
+            if (Math.abs(v1) > 10000 || Math.abs(v2) > 10000 || Math.abs(v3) > 10000) continue;
+
+            // Check if these 3 floats could be X,Y,Z (within 500 units of player in any permutation)
+            float d1 = Math.abs(v1 - px) + Math.abs(v2 - py) + Math.abs(v3 - pz);
+            float d2 = Math.abs(v1 - px) + Math.abs(v2 - pz) + Math.abs(v3 - py);
+            if (d1 < 500 || d2 < 500) {
+                return off;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Dumps the internal structure of a potential entity manager and looks for
+     * entity arrays within it. Performs full entity structure analysis.
+     */
+    private void dumpManagerStructure(long mgr, Player player, String label) {
+        logInfo(String.format("[DIAG] --- Manager %s @ 0x%X ---", label, mgr));
+
+        // Dump all offset pairs looking for array+count
+        for (int off = 0x00; off <= 0xC0; off += 4) {
+            long arr = memory.readInt(mgr + off) & 0xFFFFFFFFL;
+            int cnt = memory.readInt(mgr + off + 4);
+            if (arr < MIN_PTR || arr == mgr) continue;
+            if (cnt <= 0 || cnt > 2000) continue;
+
+            int sample = Math.min(cnt, 10);
+            int validPtrs = 0;
+            int nearPlayer = 0;
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("[DIAG] mgr+0x%X: arr=0x%X cnt=%d |", off, arr, cnt));
+
+            for (int i = 0; i < sample; i++) {
+                long ep = memory.readInt(arr + ((long) i * 4)) & 0xFFFFFFFFL;
+                if (ep < MIN_PTR || ep % 4 != 0) {
+                    sb.append(String.format(" [%d]=0x%X(inv)", i, ep));
+                    continue;
+                }
+                validPtrs++;
+
+                // Find position in this entity struct
+                int posOff = findPositionInStruct(ep, player);
+                if (posOff >= 0) {
+                    nearPlayer++;
+                    float ex = memory.readFloat(ep + posOff);
+                    float ey = memory.readFloat(ep + posOff + 4);
+                    float ez = memory.readFloat(ep + posOff + 8);
+                    sb.append(String.format(" [%d]=0x%X posOff=0x%X(%.0f,%.0f,%.0f)", i, ep, posOff, ex, ey, ez));
+                } else {
+                    sb.append(String.format(" [%d]=0x%X(noPos)", i, ep));
+                }
+            }
+
+            if (validPtrs > 0) {
+                logInfo(sb.toString());
+
+                // If we found entities with positions, do detailed struct dump of first one
+                if (nearPlayer > 0 && !diagDone) {
+                    long firstEp = 0;
+                    for (int i = 0; i < sample; i++) {
+                        long ep = memory.readInt(arr + ((long) i * 4)) & 0xFFFFFFFFL;
+                        if (ep >= MIN_PTR && findPositionInStruct(ep, player) >= 0) {
+                            firstEp = ep;
+                            break;
+                        }
+                    }
+                    if (firstEp != 0) {
+                        dumpEntityStructure(firstEp, player, label + "_entity");
+                    }
+                }
+            }
+
+            // If we found a good array, dump first entity structure
+            if (nearPlayer >= 2) {
+                // Find first valid entity and dump its structure
+                for (int i = 0; i < sample; i++) {
+                    long ep = memory.readInt(arr + ((long) i * 4)) & 0xFFFFFFFFL;
+                    if (ep < MIN_PTR) continue;
+                    int posOff = findPositionInStruct(ep, player);
+                    if (posOff >= 0) {
+                        dumpEntityStructure(ep, player, label + "_entity_from_0x" + Integer.toHexString(off));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Full dump of an entity structure. Looks for:
+     * - Position floats (3 consecutive near player), shows offset
+     * - Integer values that could be ID, type, matterId
+     * - Dumps raw ints at key offsets
+     */
+    private void dumpEntityStructure(long ep, Player player, String label) {
+        logInfo(String.format("[DIAG] +++ Entity struct dump: %s @ 0x%X +++", label, ep));
+
+        float px = player.getX(), py = player.getY(), pz = player.getZ();
+
+        // Scan for position floats
+        for (int off = 0; off <= 0x300; off += 4) {
+            float v1 = memory.readFloat(ep + off);
+            float v2 = memory.readFloat(ep + off + 4);
+            float v3 = memory.readFloat(ep + off + 8);
+
+            if (Float.isNaN(v1) || Float.isNaN(v2) || Float.isNaN(v3)) continue;
+            if (v1 == 0f && v2 == 0f && v3 == 0f) continue;
+            if (Math.abs(v1) > 10000 || Math.abs(v2) > 10000 || Math.abs(v3) > 10000) continue;
+
+            float d = Math.abs(v1 - px) + Math.abs(v2 - py) + Math.abs(v3 - pz);
+            if (d < 500) {
+                logInfo(String.format("[DIAG]   POSICAO? off=0x%X: (%.1f, %.1f, %.1f) distSoma=%.1f",
+                    off, v1, v2, v3, d));
+            }
+        }
+
+        // Dump all ints 0x00-0x300 looking for reasonable IDs and types
+        logInfo("[DIAG]   Ints interessantes (0x00-0x300):");
+        for (int off = 0; off <= 0x300; off += 4) {
+            int val = memory.readInt(ep + off);
+            // Log values that look like entity IDs (positive, reasonable range)
+            if (val > 0 && val < 100_000_000) {
+                // Also check if this could be a small type value (1-20)
+                if (val <= 20) {
+                    logInfo(String.format("[DIAG]   0x%X = %d (possivel TYPE)", off, val));
+                } else if (val > 100 && val < 10_000_000) {
+                    logInfo(String.format("[DIAG]   0x%X = %d (possivel ID/MatterId)", off, val));
+                }
+            }
+        }
+
+        // Also dump the known offsets we currently use
+        logInfo("[DIAG]   Offsets atuais:");
+        logInfo(String.format("[DIAG]   OFFSET_X(0x%X)=%.2f  OFFSET_Y(0x%X)=%.2f  OFFSET_Z(0x%X)=%.2f",
+            GameConstants.OFFSET_X, memory.readFloat(ep + GameConstants.OFFSET_X),
+            GameConstants.OFFSET_Y, memory.readFloat(ep + GameConstants.OFFSET_Y),
+            GameConstants.OFFSET_Z, memory.readFloat(ep + GameConstants.OFFSET_Z)));
+        logInfo(String.format("[DIAG]   OFFSET_ID(0x%X)=%d  OFFSET_TYPE(0x%X)=%d  OFFSET_MATTER_ID(0x%X)=%d",
+            GameConstants.OFFSET_ID, memory.readInt(ep + GameConstants.OFFSET_ID),
+            GameConstants.OFFSET_TYPE, memory.readInt(ep + GameConstants.OFFSET_TYPE),
+            GameConstants.OFFSET_MATTER_ID, memory.readInt(ep + GameConstants.OFFSET_MATTER_ID)));
+    }
+
+    /**
+     * Scan for entity arrays at any offset within a given structure.
+     */
+    private void scanForEntityArrays(long base, Player player, String label) {
+        logInfo(String.format("[DIAG] Scanning %s (0x%X) para arrays de entidades...", label, base));
+        for (int off = 0x00; off <= 0x200; off += 4) {
+            long arr = memory.readInt(base + off) & 0xFFFFFFFFL;
+            if (arr < MIN_PTR || arr == base) continue;
+
+            // Check if arr points to an array of entity-like pointers
+            int validCount = 0;
+            int nearCount = 0;
+            int sampleSize = 16;
+            for (int i = 0; i < sampleSize; i++) {
+                long ep = memory.readInt(arr + ((long) i * 4)) & 0xFFFFFFFFL;
+                if (ep < MIN_PTR || ep % 4 != 0) continue;
+                validCount++;
+                if (findPositionInStruct(ep, player) >= 0) nearCount++;
+            }
+
+            if (nearCount >= 1) {
+                int cnt = memory.readInt(base + off + 4);
+                logInfo(String.format("[DIAG] %s+0x%X: arr=0x%X valid=%d near=%d cnt_next=%d",
+                    label, off, arr, validCount, nearCount, cnt));
+
+                // Dump first few entities from this array
+                for (int i = 0; i < Math.min(3, sampleSize); i++) {
+                    long ep = memory.readInt(arr + ((long) i * 4)) & 0xFFFFFFFFL;
+                    if (ep < MIN_PTR) continue;
+                    int posOff = findPositionInStruct(ep, player);
+                    if (posOff >= 0) {
+                        dumpEntityStructure(ep, player, label + "_arr0x" + Integer.toHexString(off) + "_i" + i);
+                        break; // one dump is enough
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Dump int values from a memory range.
+     */
+    private void dumpIntRange(long base, int start, int end) {
+        StringBuilder sb = new StringBuilder();
+        int perLine = 0;
+        for (int off = start; off < end; off += 4) {
+            long val = memory.readInt(base + off) & 0xFFFFFFFFL;
+            sb.append(String.format("0x%X:0x%X ", off, val));
+            perLine++;
+            if (perLine >= 8) {
+                logInfo("[DIAG]   " + sb.toString().trim());
+                sb.setLength(0);
+                perLine = 0;
+            }
+        }
+        if (sb.length() > 0) logInfo("[DIAG]   " + sb.toString().trim());
+    }
+
+    // =======================================================================
+    // NORMAL SCAN (after diagnostic discovers offsets)
+    // =======================================================================
+
+    private void runNormalScan(long moduleBase, Player player) {
+        Set<Integer> currentMobIds = new HashSet<>();
+        Set<Integer> currentMatIds = new HashSet<>();
+
+        // Re-resolve the array address each tick
+        long staticAddr = moduleBase + GameConstants.BASE_OFFSET;
+
+        // Try: discovered manager-based path
+        if (discManagerAddr != 0 && discMgrArrayOff >= 0) {
+            // Re-resolve manager each tick
+            long rootVal = memory.readInt(staticAddr) & 0xFFFFFFFFL;
+            // We'll need to re-walk the chain to the manager... for now use cached
+            long arr = memory.readInt(discManagerAddr + discMgrArrayOff) & 0xFFFFFFFFL;
+            int cnt = memory.readInt(discManagerAddr + discMgrCountOff);
+            if (arr >= MIN_PTR && cnt > 0 && cnt <= 5000) {
+                scanArray(arr, cnt, player, currentMobIds, currentMatIds);
+            }
+        }
+
+        // Also scan any discovered secondary array
+        if (discArrayAddr != 0 && discArrayCount > 0) {
+            // Re-read the array
+            scanArray(discArrayAddr, discArrayCount, player, currentMobIds, currentMatIds);
+        }
+
+        mobCache.keySet().retainAll(currentMobIds);
+        materialCache.keySet().retainAll(currentMatIds);
+    }
+
+    /**
+     * Scans using discovered offsets.
+     */
+    private void scanArray(long arrayAddr, int count, Player player,
+                          Set<Integer> mobIds, Set<Integer> matIds) {
+        int posOff = discPosOff >= 0 ? discPosOff : GameConstants.OFFSET_X;
+        int idOff = discIdOff >= 0 ? discIdOff : GameConstants.OFFSET_ID;
+        int typeOff = discTypeOff >= 0 ? discTypeOff : GameConstants.OFFSET_TYPE;
+
+        for (int i = 0; i < count; i++) {
+            long ep = memory.readInt(arrayAddr + ((long) i * 4)) & 0xFFFFFFFFL;
+            if (ep < MIN_PTR || ep % 4 != 0) continue;
+
+            float x = memory.readFloat(ep + posOff);
+            float y = memory.readFloat(ep + posOff + 4);
+            float z = memory.readFloat(ep + posOff + 8);
+            if (!isValidPos(x, y, z)) continue;
+
+            int id = memory.readInt(ep + idOff);
+            int type = memory.readInt(ep + typeOff);
+            if (id <= 0 || id == player.getId()) continue;
+
+            float dist = dist3D(x, y, z, player);
+            if (dist > MAX_DIST) continue;
+
+            if (type == GameConstants.TYPE_MOB) {
+                mobIds.add(id);
+                Entity ent = mobCache.computeIfAbsent(id, k -> new Entity(id, 0, 0, 0, type));
+                ent.setBaseAddress(ep); ent.setX(x); ent.setY(y); ent.setZ(z);
+                ent.setHp(memory.readInt(ep + GameConstants.OFFSET_HP));
+                ent.setMaxHp(memory.readInt(ep + GameConstants.OFFSET_MAX_HP));
+                ent.calculateDistance(player);
+            } else {
+                int uniqueId = id > 0 ? id : (int)(ep & 0x7FFFFFFFL);
+                matIds.add(uniqueId);
+                Entity ent = materialCache.computeIfAbsent(uniqueId,
+                    k -> new Entity(uniqueId, 0, 0, 0, GameConstants.TYPE_MATERIAL));
+                ent.setBaseAddress(ep); ent.setX(x); ent.setY(y); ent.setZ(z);
+                ent.setDistance(dist);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    private boolean isValidPos(float x, float y, float z) {
+        if (Float.isNaN(x) || Float.isNaN(y) || Float.isNaN(z)) return false;
+        if (Math.abs(x) > 10000 || Math.abs(y) > 10000 || Math.abs(z) > 10000) return false;
+        return !(x == 0f && y == 0f && z == 0f);
+    }
+
+    private float dist3D(float x, float y, float z, Player player) {
+        float dx = x - player.getX();
+        float dy = y - player.getY();
+        float dz = z - player.getZ();
+        return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    // -----------------------------------------------------------------------
+    // Public API
+    // -----------------------------------------------------------------------
+
+    public List<Entity> getMaterials() {
+        List<Entity> list = new ArrayList<>(materialCache.values());
+        list.sort(Comparator.comparingDouble(Entity::getDistance));
+        return list;
+    }
+
+    public Entity getNearestMob() {
+        return mobCache.values().stream()
+            .min(Comparator.comparingDouble(Entity::getDistance)).orElse(null);
+    }
+
+    public Entity getNearestMaterial() {
+        return materialCache.values().stream()
+            .min(Comparator.comparingDouble(Entity::getDistance)).orElse(null);
+    }
+
+    private void logInfo(String msg) {
+        System.out.println(msg);
+        BotSettings.logToUi(msg);
+    }
+
+    private void logWarn(String msg) {
+        System.out.println(msg);
+        BotSettings.logToUi(msg);
+    }
+}

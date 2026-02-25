@@ -1,0 +1,72 @@
+[Portuguese Instructions]
+********************************************************************************
+* Instruções - Como Usar MHS-Bot-PW v2.3 With Country Customizer               *
+********************************************************************************
+
+1) Abra o jogo Perfect World e logue nele;
+--------------------------------------------------------------------------------
+
+2) Após logar-se, abra o MHS-Bot-PWBR.1.0.Final.Beta.exe;
+--------------------------------------------------------------------------------
+
+3) Configurando as Skills:
+--------------------------------------------------------------------------------
+- Clique no botão Skills;
+- Configure sua primeira tecla de skill e o tempo (em segs) para usá-la novamente;
+- Sua primeira skill não pode ser ataque normal (um pequeno bug do bot);
+- Se você desejar mais skills só usar os botões add, remove ou save;
+
+4) Configurando Auto-Pot/Rest:
+--------------------------------------------------------------------------------
+- Clique no botão Auto-Pot/Rest;
+
+- Clique no checkbox de Restore HP  se você desejar sentar pra recuperar 100% de hp;
+- Clique no percentual de HP que você deseja mandar sentar pra recuperar HP;
+- Faça o mesmo para MP se desejar;
+
+- Clique em Auto-Looting para pegar o loot automaticamente apos matar um monstro;
+- COnfigure a tecla (key) que é usada pra pegar o loot;
+- Configure quantas vezes (times) você desejar tentar pegar loot após matar um monstro;
+
+- Clique Auto-Pot HP se você deseja usar pots pra ganhar HP;
+- Configure o percentual de HP que você deseja começar a usar a tecla de pot;
+- Informe a tecla necessária para usar seu pot de HP;
+- Faça o mesmo para Auto-Pot MP se você desejar;
+
+- Clique Stop On Die se você desejar que o bot pare automaticamente após seu char morrer;
+
+
+5) Configurando Auto-Buffs:
+--------------------------------------------------------------------------------
+- Clique no botão Auto-Buffs;
+- Selecione sua primeira tecla de buffs e os segs para usar a próxima tecla de buff;
+- Selecione o intervalo em minutos para usar este buff de novo (normalmente 30 minutos);
+- Se você desejar mais buffs clique em add, remove ou save;
+
+6) Configurando Fly-Escape:
+--------------------------------------------------------------------------------
+- Clique no botão Fly Escape;
+- Clique "Try to fly to escape death" se você quizer sair voando pra escapar da morte e possuir asas;
+- Configure a tecla que inicia o seu vôo;
+- Configure o dano recebido (damage - entre seus golpes) para iniciar sua fuga;
+- Configure a quantidade de espaços (spaces) necessários pra fazer vc subir;
+
+7) Configrando o Mob-List:
+--------------------------------------------------------------------------------
+- Clique em Reset Mob List para zerar a lista de alvos;
+- Clique em Set Mob List para começar a marcar os monstros que deseja matar;
+- Vá no jogo e selecione algum monstro e clique F11 para salvar o ID do monstro;
+- Você pode fazer isto 10 vezes (monstros iguais possuem IDs diferentes);
+- Após terminar pressione F10 para encerrar a seleção de monstros;
+
+8) Configurando Mudança Automática de Armas:
+--------------------------------------------------------------------------------
+- Clique em Weapons;
+- Configure a tecla para sua proxima arma, intervalo em minutos e se deseja usar Change Weapons;
+- Você pode fazer isto 4 vezes;
+
+9) Use seus buffs manualmente a primeira vez, o bot so vai rebuffar apos os minutos informados;
+--------------------------------------------------------------------------------
+
+10) Pressione Start (F9) and Bom Jogo!
+--------------------------------------------------------------------------------

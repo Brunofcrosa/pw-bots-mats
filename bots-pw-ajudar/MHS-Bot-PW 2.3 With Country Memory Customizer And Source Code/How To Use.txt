@@ -1,0 +1,72 @@
+[English Instructions]
+********************************************************************************
+* Instructions - How To Use MHS-Bot-PW v2.3 With Country Customizer            *
+********************************************************************************
+
+1) First open the Perfect World game and logon on it;
+--------------------------------------------------------------------------------
+
+2) After logon, open MHS-Bot-PWBR.1.0.Final.Beta.exe;
+--------------------------------------------------------------------------------
+
+3) Setting Skills:
+--------------------------------------------------------------------------------
+- Click on the button Skills;
+- Set your first skill key and delay time in seconds to use;
+- Your fist skill may be a skill and not normal atack (a little bug);
+- If you want more skills click on button add, remove, or save;
+
+4) Setting Auto-Pot/Rest Options:
+--------------------------------------------------------------------------------
+- Click on button Auto-Pot/Rest;
+
+- Click Restore HP checkbox if you want to rest to get 100% hp back;
+- Click the percentual HP that you want to rest to get HP back;
+- Do the same to MP Auto-Rest if you want;
+
+- Click Auto-Looting to pick up the loot after kill a monster;
+- Set the key that pick the loot;
+- Set how many times you want to try to pick loot;
+
+- Click Auto-Pot HP if you want to use pot to gain HP;
+- Set the percentual HP where you begin to use pot key;
+- Set the key that uses your HP Pot;
+- Do the same for Auto-Pot MP if you want;
+
+- Click Stop On Die if you want that the bot stops after die;
+
+
+5) Setting Auto-Buffs Options:
+--------------------------------------------------------------------------------
+- Click on the button Auto-Buffs;
+- Set your first buff key and delay time in seconds to use next buff;
+- Set the interval in minutes to use the same buff again (normal 30 mins);
+- If you want more buffs click on button add, remove, or save;
+
+6) Setting Fly-Escape Options:
+--------------------------------------------------------------------------------
+- Click on the button Fly Escape;
+- Click "Try to fly to escape death" if you want escape death and have wings;
+- Set the key that starts your fly;
+- Set the Potential Damage (between your hits) that you want to start fly to escape death;
+- Set the total space key hits (1 second hold) that you want to up the sky;
+
+7) Setting Mob-List Options:
+--------------------------------------------------------------------------------
+- Click on Reset Mob List
+- Click on Set Mob List
+- Go on the game and select some monster and click F11 to save monster id;
+- You can do that 10 times (same monsters have different ids);
+- After do that, press F10 to end select monsters;
+
+8) Change Weapons Options:
+--------------------------------------------------------------------------------
+- Click on Weapons
+- Set your next weapon key, interval in minutes and flag to use change weapons;
+- You can do that 4 times;
+
+9) Buff yourself manually, the boot will re-buff again after the minutes informed;
+--------------------------------------------------------------------------------
+
+10) Press Start F9 and Good Game
+--------------------------------------------------------------------------------

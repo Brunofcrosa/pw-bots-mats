@@ -1,0 +1,34 @@
+[Perfect_World_Base_Address_In_Decimal]
+>Application_Title
+The title of Perfect World Application. See that information on top of game window.
+
+>Base_Address
+The base memory address in decimal to your application. Each client have different values. You have to search for that value using memory searchers applications like CE.
+
+[Custom_32_Offsets_In_Decimal]
+Target_OffSet
+The offset address in decimal to get your target id information. Each client have different values. You have to search for that value using memory searchers applications like CE.
+
+HP_OffSet
+The offset address in decimal to get your HP information. Each client have different values. You have to search for that value using memory searchers applications like CE.
+
+MaxHP_OffSet
+The offset address in decimal to get your Maximum HP information. Each client have different values. You have to search for that value using memory searchers applications like CE.
+
+MP_OffSet
+The offset address in decimal to get your MP information. Each client have different values. You have to search for that value using memory searchers applications like CE.
+
+MaxMP_OffSet
+The offset address in decimal to get your Maximum MP information. Each client have different values. You have to search for that value using memory searchers applications like CE.
+
+The default settings is for Brazil.
+
+Recommended Softwares:
+- Cheat Engine 5.4 or higher
+
+Recommended Steps:
+- Learn how to use Cheat Engine, find memory addresses and offsets on specific fórums;
+
+
+ATENTION PLEASE!!
+If you can configure with sucess the addresses for your country Perfect World, please post this back in forum for help other users and for new releases of this software.

@@ -1,5 +1,6 @@
 package com.bot.memory;
 
+import com.bot.constants.BotSettings;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
@@ -15,6 +16,7 @@ import com.sun.jna.ptr.IntByReference;
 public class WinMemoryReader {
     private HANDLE processHandle;
     private int pid;
+    private final java.util.Set<Long> bulkReadWarned = new java.util.HashSet<>();
 
     public WinMemoryReader() {}
 
@@ -122,7 +124,6 @@ public class WinMemoryReader {
         return 0;
     }
 
-    // Otimização: Bulk Read para evitar milhões de I/O nativos
     public int[] readIntArray(long address, int length) {
         Memory mem = new Memory(length * 4L);
         if (Kernel32.INSTANCE.ReadProcessMemory(processHandle, new Pointer(address), mem, (int) mem.size(), null)) {
@@ -132,7 +133,17 @@ public class WinMemoryReader {
             }
             return result;
         }
-        return new int[0];
+
+        if (bulkReadWarned.add(address)) {
+            String warn = String.format("[WARN] Bulk readIntArray falhou em 0x%X, usando leitura individual (aviso unico)", address);
+            System.out.println(warn);
+            BotSettings.logToUi(warn);
+        }
+        int[] fallback = new int[length];
+        for (int i = 0; i < length; i++) {
+            fallback[i] = readInt(address + (long) i * 4L);
+        }
+        return fallback;
     }
 
     public boolean writeInt(long address, int value) {

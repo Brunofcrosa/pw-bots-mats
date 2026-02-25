@@ -3,6 +3,8 @@ package com.bot.model;
 public class Entity {
     private long baseAddress;
     private int id, type, hp, maxHp;
+    private int templateId;
+    private String name;
     private float x, y, z, distance;
 
     public Entity() {}
@@ -34,4 +36,8 @@ public class Entity {
     public void setHp(int hp) { this.hp = hp; }
     public int getMaxHp() { return maxHp; }
     public void setMaxHp(int maxHp) { this.maxHp = maxHp; }
+    public int getTemplateId() { return templateId; }
+    public void setTemplateId(int templateId) { this.templateId = templateId; }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
 }

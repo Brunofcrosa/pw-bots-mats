@@ -1,0 +1,3 @@
+- Offsets Buttons to BR, MYEN, RU and INDONESIA;
+- Automatic Change Weapons Settings;
+

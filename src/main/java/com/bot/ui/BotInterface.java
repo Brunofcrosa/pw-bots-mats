@@ -1,5 +1,6 @@
 package com.bot.ui;
 
+import com.bot.constants.BotSettings;
 import com.bot.model.Player;
 import com.bot.model.Entity;
 import javax.swing.*;
@@ -16,6 +17,7 @@ public class BotInterface extends JFrame {
     private JList<String> matList;
     private JTextArea logArea;
     private JButton btnStart, btnStop, btnSnapshot, btnCompareDec, btnCompareUnchanged;
+    private JCheckBox chkDiagnosticLogs;
 
     public BotInterface() {
         setTitle("PW Bot Master - Multi-Farm");
@@ -67,6 +69,14 @@ public class BotInterface extends JFrame {
         btnSnapshot = new JButton("1. Snapshot");
         btnCompareDec = new JButton("2. Diminuiu (Cavar)");
         btnCompareUnchanged = new JButton("3. Inalterado (Mover)");
+        chkDiagnosticLogs = new JCheckBox("Logs diagnóstico");
+
+        chkDiagnosticLogs.setSelected(BotSettings.isDiagnosticLogsEnabled());
+        chkDiagnosticLogs.addActionListener(e -> {
+            boolean enabled = chkDiagnosticLogs.isSelected();
+            BotSettings.setDiagnosticLogsEnabled(enabled);
+            log(enabled ? "Logs de diagnóstico: ON" : "Logs de diagnóstico: OFF");
+        });
 
         btnCompareDec.setEnabled(false);
         btnCompareUnchanged.setEnabled(false);
@@ -74,6 +84,12 @@ public class BotInterface extends JFrame {
         scannerPanel.add(btnSnapshot);
         scannerPanel.add(btnCompareDec);
         scannerPanel.add(btnCompareUnchanged);
+        scannerPanel.add(chkDiagnosticLogs);
+
+        btnSnapshot.setVisible(false);
+        btnCompareDec.setVisible(false);
+        btnCompareUnchanged.setVisible(false);
+        scannerPanel.add(new JLabel("Detecção automática ativa (sem snapshot manual)."));
         panel.add(scannerPanel, BorderLayout.SOUTH);
 
         return panel;
@@ -128,7 +144,11 @@ public class BotInterface extends JFrame {
                 targetHpBar.setValue(0); targetDistLabel.setText("Distância: -- m");
             }
             matListModel.clear();
-            for (Entity mat : mats) matListModel.addElement(String.format("ID: %d | Dist: %.1f m", mat.getId(), mat.getDistance()));
+            for (Entity mat : mats) {
+                String displayName = mat.getName() != null ? mat.getName() : "Material";
+                matListModel.addElement(String.format("%s (tid:%d) | Dist: %.1f m",
+                        displayName, mat.getTemplateId(), mat.getDistance()));
+            }
         });
     }
 

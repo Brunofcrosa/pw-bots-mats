@@ -1,0 +1,66 @@
+MHS-Bot-PW v2.3 With Country Memory Customizer
+==============================================
+
+(English)
+
+This relase if default configured to Perfect World (Brazil). If you want to adjust to your country the Perfect World application title, memory base address and memory offsets to find Target, HP, Max HP, Max MP please see read notes for CustomOffSets.ini.
+
+You can try to find the memory addresses using softwares like Cheat Engine (memory searchers).
+
+This versions implement:
+
+- Memory Addresses Customizer (See notes for CustomOffSets.ini)
+- Multiple-skills configuration;
+- Auto-Rest to Restore HP/MP;
+- Auto-Pot for HP/MP;
+- Auto-Pick Loot;
+- Stop on Die (just stop the bot on death)
+- Moblist Set to 10 different Monsters (if you think that you need more, tell me);
+- Auto-Buffs;
+- Fly to Escape Death Options;
+- Potential Received Damage Display Between Hits;
+- Change Weapons Settings;
+
+Post your question i will try to help you. If you can configure with sucess to your country, post the addresses on forum for another users can configure and for help to new releases.
+
+GM Are VERY Active, use this with much care.
+
+Please Read the Instructions first.
+
+
+(Portuguese)
+
+Este release esta configurado por padrão para Perfect Worlf (Brazil). Você pode ajustar para seu país os endereços de memória e offsets do Perfect World que informam o Target, HP, Max HP, MP, Max MP. Veja as anotações para configurar CustomOffSets.ini
+
+Você pode tentar encontrar endereços de memória usando softwares como o Cheat Engine (pesquisador de memórias).
+
+Esta versão contém:
+
+- Customizador dos Endereços de Memória (Veja anotações para CustomOffSets.ini)
+- Configuração de Multiplas Skills;
+- Descanso Automatico para restaurar HP/MP;
+- Uso Automático de Pots de HP/MP;
+- Pegar loot automaticamente;
+- Parar o bot caso venha a morrer (apenas para o bot);
+- Permite selecionar até 10 monstros que deseja matar (se precisar mais, me fale);
+- Configuração para Auto-Buffs;
+- Opções para Voar para Escapar da Morte (Fly To Escape Death);
+- Dano Recebido Potencial no Display do Bot;
+- Mudança de Arma Automática;
+
+Não contém ainda (preciso de mais informações para implementar):
+
+- Uso Automatico de Pots para Pets;
+- Calcular a distancia para atacar apenas os monstros próximos;
+
+Lista de Problemas:
+
+A) Ataque normal não pode ser o seu primeiro ataque. Isto ocorre porque o bot não consegue ver o HP do monstro quando este é selecionado. Por enquanto, use uma skill como seu primeiro ataque e, depois use o ataque normal. 
+
+Envie sua pergunta, tentarei responder.
+
+GM é MUITO ATIVO, use isto com precaução.
+
+Leia as instruções primeiro.
+
+

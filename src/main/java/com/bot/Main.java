@@ -7,8 +7,8 @@ import com.bot.model.Player;
 import com.bot.model.Entity;
 import com.bot.model.Vector3;
 import com.bot.memory.WinMemoryReader;
-import com.bot.memory.MemoryDiffScanner;
 import com.bot.input.InputSimulator;
+import com.bot.constants.BotSettings;
 import com.bot.constants.GameConstants;
 import com.bot.ui.BotInterface;
 
@@ -17,15 +17,26 @@ import java.util.Arrays;
 import java.util.List;
 
 public class Main {
+
     public static void main(String[] args) {
+        if (!isRunningAsAdmin()) {
+            System.out.println("[INFO] Sem privilegios de administrador. Relancando com elevacao...");
+            relaunchAsAdmin();
+            System.exit(0);
+            return;
+        }
+        System.out.println("[OK] Executando como administrador.");
+
         BotInterface gui = new BotInterface();
         SwingUtilities.invokeLater(() -> gui.setVisible(true));
+        BotSettings.setUiLogSink(gui::log);
+        gui.log("[OK] Executando como administrador.");
 
         WinMemoryReader memory = new WinMemoryReader();
         InputSimulator input = new InputSimulator();
         Player player = new Player();
 
-        gui.log("Aguardando processo: " + GameConstants.WINDOW_NAME + "...");
+        gui.log("[INFO] Aguardando processo: " + GameConstants.WINDOW_NAME + "...");
 
         while (!memory.openProcess(GameConstants.WINDOW_NAME)) {
             try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
@@ -33,30 +44,13 @@ public class Main {
 
         long moduleBase = memory.getModuleBaseAddress(GameConstants.PROCESS_NAME);
         if (moduleBase == 0) {
-            gui.log("Erro: Não foi possível encontrar a base do módulo.");
+            gui.log("[WARN] Nao foi possivel encontrar a base do modulo.");
             return;
         }
 
-        MemoryDiffScanner diffScanner = new MemoryDiffScanner(memory, moduleBase);
-
-        gui.getBtnSnapshot().addActionListener(e -> {
-            gui.getBtnSnapshot().setEnabled(false);
-            gui.log("Tirando Snapshot da memória genérica...");
-
-            new Thread(() -> {
-                int tracked = diffScanner.takeSnapshot();
-                SwingUtilities.invokeLater(() -> {
-                    gui.log("Snapshot pronto! " + tracked + " arrays rastreados.");
-                    gui.getBtnSnapshot().setEnabled(true);
-                    gui.getBtnCompareDec().setEnabled(true);
-                    gui.getBtnCompareUnchanged().setEnabled(true);
-                });
-            }).start();
-        });
-
-        // Passa o 'player' para calcular as coordenadas no Diff
-        gui.getBtnCompareDec().addActionListener(e -> processFilter(gui, diffScanner, true, player));
-        gui.getBtnCompareUnchanged().addActionListener(e -> processFilter(gui, diffScanner, false, player));
+        gui.getBtnSnapshot().setEnabled(false);
+        gui.getBtnCompareDec().setEnabled(false);
+        gui.getBtnCompareUnchanged().setEnabled(false);
 
         long dynamicBasePointer = moduleBase + GameConstants.BASE_OFFSET;
         EntityManager entityManager = new EntityManager(memory, dynamicBasePointer);
@@ -69,7 +63,8 @@ public class Main {
         WaypointManager waypointManager = new WaypointManager(route);
         BotContext bot = new BotContext(memory, input, player, entityManager, moduleBase, waypointManager);
 
-        gui.log("Bot acoplado com sucesso. Use a aba de Materiais para descobrir offsets.");
+        gui.log("[INFO] Bot acoplado com sucesso.");
+        gui.log("[INFO] Deteccao automatica de materiais ativa. Snapshot manual nao e necessario.");
 
         new Thread(() -> {
             while (true) {
@@ -91,44 +86,29 @@ public class Main {
         }).start();
     }
 
-    private static void processFilter(BotInterface gui, MemoryDiffScanner diffScanner, boolean decrease, Player player) {
-        gui.getBtnCompareDec().setEnabled(false);
-        gui.getBtnCompareUnchanged().setEnabled(false);
-        gui.log("Aplicando filtro: " + (decrease ? "Diminuiu" : "Inalterado") + "...");
+    private static boolean isRunningAsAdmin() {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"net", "session"});
+            byte[] buf = new byte[1024];
+            while (p.getInputStream().read(buf) != -1) {}
+            while (p.getErrorStream().read(buf) != -1) {}
+            return p.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
-        new Thread(() -> {
-            List<String> candidates = decrease ? diffScanner.compareDecreased() : diffScanner.compareUnchanged();
-
-            // Auto-Descoberta Baseada em Coordenadas
-            if (!candidates.isEmpty() && candidates.size() <= 200) {
-                gui.log("Inspecionando " + candidates.size() + " arrays (Buscando as suas coordenadas)...");
-                String found = diffScanner.findCorrectChain(candidates, player);
-
-                if (found != null) {
-                    SwingUtilities.invokeLater(() -> {
-                        gui.log(">>> O ARRAY CORRETO FOI ENCONTRADO! <<<");
-                        gui.log("-> Cheque o console do IntelliJ para ver os OFFSETS!");
-                        gui.getBtnSnapshot().setEnabled(true);
-                    });
-                    return;
-                } else {
-                    gui.log("As coordenadas não bateram em nenhum array. Fique bem em cima da erva!");
-                }
-            }
-
-            SwingUtilities.invokeLater(() -> {
-                if (candidates.isEmpty()) {
-                    gui.log("Nenhum array restou. O offset foi perdido. Faça um novo Snapshot.");
-                } else if (candidates.size() == 1) {
-                    gui.log(">>> OFFSET ENCONTRADO <<<");
-                    gui.log("MATTER_LIST_CHAIN = { " + candidates.get(0) + " };");
-                } else {
-                    gui.log(candidates.size() + " arrays restantes. Cave outra erva e clique em DIMINUIU.");
-                    gui.getBtnCompareDec().setEnabled(true);
-                    gui.getBtnCompareUnchanged().setEnabled(true);
-                }
-                gui.getBtnSnapshot().setEnabled(true);
-            });
-        }).start();
+    private static void relaunchAsAdmin() {
+        try {
+            String java = System.getProperty("java.home") + "\\bin\\java.exe";
+            String cp = System.getProperty("java.class.path");
+            String cmd = "Start-Process -FilePath '" + java.replace("'", "''") +
+                "' -ArgumentList '-cp','" + cp.replace("'", "''") +
+                "','com.bot.Main' -Verb RunAs";
+            Runtime.getRuntime().exec(new String[]{"powershell", "-Command", cmd});
+        } catch (Exception e) {
+            System.err.println("Falha ao elevar privilegios: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }
