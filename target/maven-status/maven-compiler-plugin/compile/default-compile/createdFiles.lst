@@ -1,7 +1,9 @@
 com\bot\input\InputSimulator$User32Ext.class
 com\bot\input\InputSimulator$Keys.class
 com\bot\memory\WinMemoryReader.class
+com\bot\model\ResourceSpawn.class
 com\bot\input\InputSimulator.class
+com\bot\model\ResourceDatabase.class
 com\bot\Main.class
 com\bot\model\Entity.class
 com\bot\constants\GameConstants.class

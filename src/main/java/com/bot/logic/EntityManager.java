@@ -5,12 +5,15 @@ import com.bot.constants.GameConstants;
 import com.bot.memory.WinMemoryReader;
 import com.bot.model.Entity;
 import com.bot.model.Player;
+import com.bot.model.ResourceDatabase;
+import com.bot.model.ResourceSpawn;
 import java.util.*;
 
 public class EntityManager {
 
     private final WinMemoryReader memory;
     private final long dynamicBaseAddress;
+    private final ResourceDatabase resourceDb;
 
     private final Map<Integer, Entity> mobCache      = new LinkedHashMap<>();
     private final Map<Integer, Entity> materialCache = new LinkedHashMap<>();
@@ -29,9 +32,10 @@ public class EntityManager {
     private static final int   MIN_STABLE       = 5;
     private static final long  MIN_PTR          = 0x10000L;
 
-    public EntityManager(WinMemoryReader memory, long dynamicBaseAddress) {
+    public EntityManager(WinMemoryReader memory, long dynamicBaseAddress, ResourceDatabase resourceDb) {
         this.memory = memory;
         this.dynamicBaseAddress = dynamicBaseAddress;
+        this.resourceDb = resourceDb;
     }
 
     public void update(long moduleBase, Player player) {
@@ -95,8 +99,9 @@ public class EntityManager {
             for (Entity e : materialCache.values()) {
                 Integer sc = stableCount.get((int)(e.getBaseAddress() & 0x7FFFFFFFL));
                 int type = memory.readInt(e.getBaseAddress() + GameConstants.OFFSET_TYPE);
-                logInfo(String.format("[DETECT]   addr=0x%X type=%d pos=(%.1f,%.1f,%.1f) dist=%.1f stable=%d",
-                        e.getBaseAddress(), type,
+                String name = e.getName() != null ? e.getName() : "?";
+                logInfo(String.format("[DETECT]   addr=0x%X type=%d name=%s pos=(%.1f,%.1f,%.1f) dist=%.1f stable=%d",
+                        e.getBaseAddress(), type, name,
                         e.getX(), e.getY(), e.getZ(), e.getDistance(),
                         sc != null ? sc : 0));
             }
@@ -185,6 +190,28 @@ public class EntityManager {
         }
 
         probeNpcNames(arr, cnt, player);
+
+        // Show nearby known resource spawns from coordinate database
+        if (resourceDb != null && resourceDb.getSpawnCount() > 0) {
+            List<ResourceSpawn> nearSpawns = resourceDb.findNearby(
+                    player.getX(), player.getY(), player.getZ(), 150.0f);
+            logInfo(String.format("[RES-DB] %d spawns conhecidos dentro de 150m do jogador:", nearSpawns.size()));
+            Map<String, Integer> catCount = new LinkedHashMap<>();
+            for (ResourceSpawn sp : nearSpawns) {
+                catCount.merge(sp.getCategory(), 1, Integer::sum);
+            }
+            for (Map.Entry<String, Integer> e : catCount.entrySet()) {
+                logInfo(String.format("[RES-DB]   %s: %d spawns", e.getKey(), e.getValue()));
+            }
+            int shown = 0;
+            for (ResourceSpawn sp : nearSpawns) {
+                if (shown >= 10) break;
+                float d = sp.distanceTo(player.getX(), player.getY(), player.getZ());
+                logInfo(String.format("[RES-DB]   %s Lv%d dist=%.1fm pos=(%.1f,%.1f,%.1f)",
+                        sp.getName(), sp.getLevel(), d, sp.getX(), sp.getY(), sp.getZ()));
+                shown++;
+            }
+        }
 
         logInfo("=== [SCAN] FIM ===");
     }
@@ -437,7 +464,8 @@ public class EntityManager {
             Entity ent = getOrCreate(materialCache, uid, type);
             fill(ent, ep, x, y, z, type, player);
             if (tickCount % 50 == 0) {
-                logInfo(String.format("[MAT-OK] type=%d ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)", type, ep, dist, x, y, z));
+                String name = ent.getName() != null ? ent.getName() : "?";
+                logInfo(String.format("[MAT-OK] type=%d name=%s ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)", type, name, ep, dist, x, y, z));
             }
         }
     }
@@ -476,7 +504,8 @@ public class EntityManager {
                     Entity ent = getOrCreate(materialCache, uid, GameConstants.TYPE_MATERIAL);
                     fill(ent, ep, x, y, z, GameConstants.TYPE_MATERIAL, player);
                     if (tickCount % 50 == 0) {
-                        logInfo(String.format("[RES-OK] ch=0x%X ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)", ch[0], ep, dist, x, y, z));
+                        String name = ent.getName() != null ? ent.getName() : "?";
+                        logInfo(String.format("[RES-OK] ch=0x%X name=%s ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)", ch[0], name, ep, dist, x, y, z));
                     }
                 }
             }
@@ -503,6 +532,15 @@ public class EntityManager {
         ent.setX(x); ent.setY(y); ent.setZ(z);
         ent.setType(type);
         ent.calculateDistance(player);
+
+        // Identify material by position matching against known spawn database
+        if (type != GameConstants.TYPE_MOB && resourceDb != null && ent.getName() == null) {
+            ResourceSpawn sp = resourceDb.matchToSpawn(x, y, z);
+            if (sp != null) {
+                ent.setName(sp.getName());
+                ent.setTemplateId(sp.getTemplateId());
+            }
+        }
     }
 
     private Entity getOrCreate(Map<Integer, Entity> cache, int uid, int type) {

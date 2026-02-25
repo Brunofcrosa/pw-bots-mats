@@ -6,6 +6,7 @@ import com.bot.logic.WaypointManager;
 import com.bot.model.Player;
 import com.bot.model.Entity;
 import com.bot.model.Vector3;
+import com.bot.model.ResourceDatabase;
 import com.bot.memory.WinMemoryReader;
 import com.bot.input.InputSimulator;
 import com.bot.constants.BotSettings;
@@ -53,7 +54,18 @@ public class Main {
         gui.getBtnCompareUnchanged().setEnabled(false);
 
         long dynamicBasePointer = moduleBase + GameConstants.BASE_OFFSET;
-        EntityManager entityManager = new EntityManager(memory, dynamicBasePointer);
+
+        // Load resource spawn database from coords file
+        ResourceDatabase resourceDb = new ResourceDatabase();
+        String coordsPath = System.getProperty("user.dir") + "\\coordenadas\\coords world.txt";
+        java.io.File coordsFile = new java.io.File(coordsPath);
+        if (coordsFile.exists()) {
+            resourceDb.loadFromFile(coordsPath);
+        } else {
+            gui.log("[WARN] Arquivo de coordenadas nao encontrado: " + coordsPath);
+        }
+
+        EntityManager entityManager = new EntityManager(memory, dynamicBasePointer, resourceDb);
 
         List<Vector3> route = Arrays.asList(
                 new Vector3(100.0f, 50.0f, 200.0f),
