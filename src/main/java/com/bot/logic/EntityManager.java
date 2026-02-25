@@ -17,10 +17,7 @@ public class EntityManager {
     private final Map<Integer, float[]> prevPositions = new HashMap<>();
     private final Map<Integer, Integer> stableCount  = new HashMap<>();
 
-    private int resStep1Off = -1;
-    private int resArrOff = -1;
-    private int resCntOff = -1;
-    private int bestResNear = 0;
+    private final List<int[]> resChains = new ArrayList<>();
 
     private int tickCount = 0;
     private boolean firstLog = false;
@@ -168,8 +165,7 @@ public class EntityManager {
 
         logInfo("[SCAN] --- Buscando resource chain (lista de recursos separada) ---");
         boolean foundRes = false;
-        bestResNear = 0;
-        resStep1Off = -1;
+        resChains.clear();
 
         for (int resMgrOff = 0x04; resMgrOff <= 0x80; resMgrOff += 4) {
             if (resMgrOff == 0x24) continue;
@@ -178,9 +174,11 @@ public class EntityManager {
             foundRes |= probeResMgr(resMgr, resMgrOff, player, "step1", resMgrOff);
         }
 
-        if (resStep1Off >= 0) {
-            logInfo(String.format("[SCAN] BEST resource chain: step1+0x%X arr=0x%X cnt=0x%X (near=%d)",
-                    resStep1Off, resArrOff, resCntOff, bestResNear));
+        if (!resChains.isEmpty()) {
+            logInfo(String.format("[SCAN] Found %d resource chains:", resChains.size()));
+            for (int[] ch : resChains) {
+                logInfo(String.format("[SCAN]   step1+0x%X arr=0x%X cnt=0x%X", ch[0], ch[1], ch[2]));
+            }
             probeNamesOnChain(step1, player);
         } else {
             logInfo("[SCAN] Nenhuma resource chain encontrada via step1");
@@ -236,12 +234,15 @@ public class EntityManager {
                     found = true;
 
                     if (step1OffParam >= 0 && hasSmallIds) {
-                        int score = smallIdCount * 100 + nearHits;
-                        if (score > bestResNear) {
-                            bestResNear = score;
-                            resStep1Off = step1OffParam;
-                            resArrOff = arrOff;
-                            resCntOff = cntOff;
+                        boolean dup = false;
+                        for (int[] existing : resChains) {
+                            if (existing[0] == step1OffParam && existing[1] == arrOff && existing[2] == cntOff) {
+                                dup = true;
+                                break;
+                            }
+                        }
+                        if (!dup) {
+                            resChains.add(new int[]{step1OffParam, arrOff, cntOff});
                         }
                     }
                 }
@@ -251,11 +252,12 @@ public class EntityManager {
     }
 
     private void probeNamesOnChain(long step1, Player player) {
-        if (resStep1Off < 0) return;
-        long resMgr = readPtr(step1 + resStep1Off);
+        if (resChains.isEmpty()) return;
+        int[] ch = resChains.get(0);
+        long resMgr = readPtr(step1 + ch[0]);
         if (resMgr < MIN_PTR) return;
-        long arr = readPtr(resMgr + resArrOff);
-        int cnt = memory.readInt(resMgr + resCntOff);
+        long arr = readPtr(resMgr + ch[1]);
+        int cnt = memory.readInt(resMgr + ch[2]);
         if (arr < MIN_PTR || cnt <= 0) return;
 
         logInfo("[SCAN] --- Name probe on resource entities ---");
@@ -441,38 +443,41 @@ public class EntityManager {
     }
 
     private void scanResourceArray(long moduleBase, Player player, Set<Integer> matIds) {
-        if (resStep1Off < 0) return;
+        if (resChains.isEmpty()) return;
         long rootVal = readPtr(moduleBase + GameConstants.BASE_OFFSET);
         if (rootVal < MIN_PTR) return;
         long step1 = readPtr(rootVal + 0x18);
         if (step1 < MIN_PTR) return;
-        long resMgr = readPtr(step1 + resStep1Off);
-        if (resMgr < MIN_PTR) return;
-        long arr = readPtr(resMgr + resArrOff);
-        int cnt = memory.readInt(resMgr + resCntOff);
-        if (arr < MIN_PTR || cnt <= 0 || cnt > 800) return;
 
-        if (tickCount <= 2) {
-            logInfo(String.format("[RES] chain ok - resMgr=0x%X arr=0x%X cnt=%d", resMgr, arr, cnt));
-        }
+        for (int[] ch : resChains) {
+            long resMgr = readPtr(step1 + ch[0]);
+            if (resMgr < MIN_PTR) continue;
+            long arr = readPtr(resMgr + ch[1]);
+            int cnt = memory.readInt(resMgr + ch[2]);
+            if (arr < MIN_PTR || cnt <= 0 || cnt > 800) continue;
 
-        for (int i = 0; i < cnt; i++) {
-            long ep = readPtr(arr + (long) i * 4);
-            if (ep < MIN_PTR) continue;
-            float x = memory.readFloat(ep + 0x3C);
-            float y = memory.readFloat(ep + 0x40);
-            float z = memory.readFloat(ep + 0x44);
-            if (!isValidPos(x, y, z)) continue;
-            float dist = dist3D(x, y, z, player);
-            if (dist > MAT_MAX_DIST) continue;
+            if (tickCount <= 2) {
+                logInfo(String.format("[RES] chain step1+0x%X arr=0x%X cnt=%d", ch[0], arr, cnt));
+            }
 
-            int uid = (int) (ep & 0x7FFFFFFFL);
-            if (!matIds.contains(uid)) {
-                matIds.add(uid);
-                Entity ent = getOrCreate(materialCache, uid, GameConstants.TYPE_MATERIAL);
-                fill(ent, ep, x, y, z, GameConstants.TYPE_MATERIAL, player);
-                if (tickCount % 50 == 0) {
-                    logInfo(String.format("[RES-OK] ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)", ep, dist, x, y, z));
+            for (int i = 0; i < cnt; i++) {
+                long ep = readPtr(arr + (long) i * 4);
+                if (ep < MIN_PTR) continue;
+                float x = memory.readFloat(ep + 0x3C);
+                float y = memory.readFloat(ep + 0x40);
+                float z = memory.readFloat(ep + 0x44);
+                if (!isValidPos(x, y, z)) continue;
+                float dist = dist3D(x, y, z, player);
+                if (dist > MAT_MAX_DIST) continue;
+
+                int uid = (int) (ep & 0x7FFFFFFFL);
+                if (!matIds.contains(uid)) {
+                    matIds.add(uid);
+                    Entity ent = getOrCreate(materialCache, uid, GameConstants.TYPE_MATERIAL);
+                    fill(ent, ep, x, y, z, GameConstants.TYPE_MATERIAL, player);
+                    if (tickCount % 50 == 0) {
+                        logInfo(String.format("[RES-OK] ch=0x%X ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)", ch[0], ep, dist, x, y, z));
+                    }
                 }
             }
         }
