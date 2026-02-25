@@ -14,7 +14,7 @@ public class GameConstants {
     public static final long MATTER_BASE_OFFSET = 0xA414B0;
 
     public static final int MATTER_TYPE = 8;
-    public static final int OFFSET_MATTER_ID = 0x114;
+    public static final int OFFSET_MATTER_ID = 0x24;
 
     public static final int OFFSET_ID = 0x190;
     public static final int OFFSET_TYPE = 0xB4;

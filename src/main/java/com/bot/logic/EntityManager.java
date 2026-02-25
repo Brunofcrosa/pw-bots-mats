@@ -28,9 +28,9 @@ public class EntityManager {
     private static final long  MIN_PTR          = 0x10000L;
     private static final int   MAX_MATS         = 50;
 
-    private static final int[] RES_POS_OFFS = {0xB0, 0x3C, 0x180};
-    private static final int[] RES_MGR_OFFS = {0x18, 0x20, 0x64, 0x7C, 0x80, 0xC0, 0xD0, 0xD4, 0xE4};
-    private static final int[] RES_ARR_OFFS = {0x08, 0x20, 0x34, 0x50, 0x64, 0x68, 0x80, 0x8C, 0x98, 0xB0, 0xBC};
+    private static final int[] RES_POS_OFFS = {0x3C, 0xB0, 0x180};
+    private static final int[] RES_MGR_OFFS = {0x18, 0x20, 0x5C, 0x60, 0x64, 0x7C, 0x80, 0xC0, 0xD0, 0xD4, 0xE4};
+    private static final int[] RES_ARR_OFFS = {0x08, 0x20, 0x34, 0x50, 0x64, 0x68, 0x6C, 0x80, 0x8C, 0x98, 0xB0, 0xBC};
 
     public EntityManager(WinMemoryReader memory, long dynamicBaseAddress) {
         this.memory = memory;
@@ -47,7 +47,7 @@ public class EntityManager {
         Set<Integer> mobIds = new HashSet<>();
         Set<Integer> matIds = new HashSet<>();
 
-        scanNpcArray(moduleBase, player, mobIds);
+        scanNpcArray(moduleBase, player, mobIds, matIds);
         scanResourceSubsystem(moduleBase, player, matIds);
 
         mobCache.keySet().retainAll(mobIds);
@@ -321,7 +321,7 @@ public class EntityManager {
         logInfo("=== [DEEP-SCAN] FIM ===");
     }
 
-    private void scanNpcArray(long moduleBase, Player player, Set<Integer> mobIds) {
+    private void scanNpcArray(long moduleBase, Player player, Set<Integer> mobIds, Set<Integer> matIds) {
         long rootVal = readPtr(moduleBase + GameConstants.BASE_OFFSET);
         if (rootVal < MIN_PTR) return;
 
@@ -348,9 +348,20 @@ public class EntityManager {
             float z = memory.readFloat(ep + 0x44);
             if (!isValidPos(x, y, z)) continue;
 
+            int type = memory.readInt(ep + GameConstants.OFFSET_TYPE);
             float dist = dist3D(x, y, z, player);
-            if (dist > MOB_MAX_DIST || dist < 0.5f) continue;
 
+            if (type == GameConstants.TYPE_MATERIAL) {
+                if (dist > RES_MAX_DIST || dist < 0.1f) continue;
+                int uid = (int) (ep & 0x7FFFFFFFL);
+                matIds.add(uid);
+                Entity ent = getOrCreate(materialCache, uid, GameConstants.TYPE_MATERIAL);
+                fill(ent, ep, x, y, z, GameConstants.TYPE_MATERIAL, player);
+                readAndSetTemplateId(ent, ep);
+                continue;
+            }
+
+            if (dist > MOB_MAX_DIST || dist < 0.5f) continue;
             int uid = (int) (ep & 0x7FFFFFFFL);
             mobIds.add(uid);
             fill(getOrCreate(mobCache, uid, GameConstants.TYPE_MOB), ep, x, y, z, GameConstants.TYPE_MOB, player);
@@ -361,11 +372,30 @@ public class EntityManager {
         long rootVal = readPtr(moduleBase + GameConstants.BASE_OFFSET);
         if (rootVal < MIN_PTR) return;
 
-        long resSub = readPtr(rootVal + 0x58);
-        if (resSub < MIN_PTR) return;
+        int[] rootOffs = {0x58, 0x3C};
+        for (int rootOff : rootOffs) {
+            long resSub = readPtr(rootVal + rootOff);
+            if (resSub < MIN_PTR) continue;
+            scanSubChain(resSub, player, matIds);
+        }
 
+        long npcSub = readPtr(rootVal + 0x18);
+        if (npcSub >= MIN_PTR) {
+            long altMgr = readPtr(npcSub + 0x20);
+            if (altMgr >= MIN_PTR) {
+                for (int arrOff : RES_ARR_OFFS) {
+                    long arr = readPtr(altMgr + arrOff);
+                    int cnt = memory.readInt(altMgr + arrOff + 4);
+                    if (arr < MIN_PTR || cnt <= 0 || cnt > 200) continue;
+                    scanResArray(arr, cnt, player, matIds);
+                }
+            }
+        }
+    }
+
+    private void scanSubChain(long sub, Player player, Set<Integer> matIds) {
         for (int mgrOff : RES_MGR_OFFS) {
-            long mgr = readPtr(resSub + mgrOff);
+            long mgr = readPtr(sub + mgrOff);
             if (mgr < MIN_PTR) continue;
 
             for (int arrOff : RES_ARR_OFFS) {
@@ -391,6 +421,7 @@ public class EntityManager {
             float bestX = 0, bestY = 0, bestZ = 0;
             boolean hit = false;
             String skipReason = null;
+            float skipDist = Float.MAX_VALUE;
 
             for (int posOff : RES_POS_OFFS) {
                 float x = memory.readFloat(ep + posOff);
@@ -403,6 +434,7 @@ public class EntityManager {
                         if (diag) {
                             skipReason = String.format("MOB_OVERLAP posOff=0x%X d=%.1f pos=(%.1f,%.1f,%.1f)",
                                     posOff, d, x, y, z);
+                            skipDist = d;
                         }
                         continue;
                     }
@@ -410,13 +442,14 @@ public class EntityManager {
                     bestX = x; bestY = y; bestZ = z;
                     hit = true;
                     break;
-                } else if (diag && isValidPos(x, y, z)) {
+                } else if (diag && isValidPos(x, y, z) && d < skipDist) {
                     skipReason = String.format("DIST_FILTER posOff=0x%X d=%.1f pos=(%.1f,%.1f,%.1f)",
                             posOff, d, x, y, z);
+                    skipDist = d;
                 }
             }
 
-            if (diag && !hit && skipReason != null) {
+            if (diag && !hit && skipReason != null && skipDist < 500.0f) {
                 logInfo(String.format("[SKIP] ep=0x%X reason=%s", ep, skipReason));
             }
 
