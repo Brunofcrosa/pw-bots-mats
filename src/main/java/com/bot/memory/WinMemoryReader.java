@@ -33,7 +33,7 @@ public class WinMemoryReader {
         this.pid = pidRef.getValue();
 
         this.processHandle = Kernel32.INSTANCE.OpenProcess(
-                WinNT.PROCESS_VM_READ | WinNT.PROCESS_VM_OPERATION | WinNT.PROCESS_QUERY_INFORMATION,
+                WinNT.PROCESS_ALL_ACCESS,
                 false, pid);
         return this.processHandle != null;
     }
@@ -189,4 +189,7 @@ public class WinMemoryReader {
     public void close() {
         if (this.processHandle != null) Kernel32.INSTANCE.CloseHandle(this.processHandle);
     }
+
+    public HANDLE getProcessHandle() { return processHandle; }
+    public int getPid() { return pid; }
 }

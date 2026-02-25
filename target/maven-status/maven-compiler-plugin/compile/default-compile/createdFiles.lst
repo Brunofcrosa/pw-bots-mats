@@ -4,6 +4,7 @@ com\bot\memory\WinMemoryReader.class
 com\bot\model\ResourceSpawn.class
 com\bot\input\InputSimulator.class
 com\bot\model\ResourceDatabase.class
+com\bot\memory\PacketSender.class
 com\bot\Main.class
 com\bot\model\Entity.class
 com\bot\constants\GameConstants.class

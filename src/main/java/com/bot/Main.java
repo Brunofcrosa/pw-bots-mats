@@ -8,6 +8,7 @@ import com.bot.model.Entity;
 import com.bot.model.Vector3;
 import com.bot.model.ResourceDatabase;
 import com.bot.memory.WinMemoryReader;
+import com.bot.memory.PacketSender;
 import com.bot.input.InputSimulator;
 import com.bot.constants.BotSettings;
 import com.bot.constants.GameConstants;
@@ -67,13 +68,22 @@ public class Main {
 
         EntityManager entityManager = new EntityManager(memory, dynamicBasePointer, resourceDb);
 
+        // Initialize packet sender for game interaction
+        PacketSender packetSender = new PacketSender(memory);
+        boolean pktReady = packetSender.initialize(moduleBase);
+        if (pktReady) {
+            gui.log("[OK] PacketSender inicializado com sucesso.");
+        } else {
+            gui.log("[WARN] PacketSender nao inicializado. Interacao por pacotes desativada.");
+        }
+
         List<Vector3> route = Arrays.asList(
                 new Vector3(100.0f, 50.0f, 200.0f),
                 new Vector3(120.0f, 50.0f, 210.0f),
                 new Vector3(150.0f, 60.0f, 250.0f)
         );
         WaypointManager waypointManager = new WaypointManager(route);
-        BotContext bot = new BotContext(memory, input, player, entityManager, moduleBase, waypointManager);
+        BotContext bot = new BotContext(memory, input, player, entityManager, moduleBase, waypointManager, packetSender);
 
         gui.log("[INFO] Bot acoplado com sucesso.");
         gui.log("[INFO] Deteccao automatica de materiais ativa. Snapshot manual nao e necessario.");
