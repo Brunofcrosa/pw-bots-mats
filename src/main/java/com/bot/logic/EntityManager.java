@@ -418,6 +418,14 @@ public class EntityManager {
             int uid = (int) (ep & 0x7FFFFFFFL);
             if (mobCache.containsKey(uid) || matIds.contains(uid)) continue;
 
+            if (!isLikelyMaterial(ep)) {
+                if (diag) {
+                    int tid = memory.readInt(ep + GameConstants.OFFSET_MATTER_ID);
+                    logInfo(String.format("[SKIP] ep=0x%X reason=BAD_TEMPLATE_ID tid=%d", ep, tid));
+                }
+                continue;
+            }
+
             float bestX = 0, bestY = 0, bestZ = 0;
             boolean hit = false;
             String skipReason = null;
@@ -487,6 +495,11 @@ public class EntityManager {
 
     private long readPtr(long addr) {
         return memory.readInt(addr) & 0xFFFFFFFFL;
+    }
+
+    private boolean isLikelyMaterial(long ep) {
+        int tid = memory.readInt(ep + GameConstants.OFFSET_MATTER_ID);
+        return tid > 0 && tid < 100000;
     }
 
     private boolean isValidPos(float x, float y, float z) {
