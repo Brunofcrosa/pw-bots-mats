@@ -171,13 +171,8 @@ public class EntityManager {
         bestResNear = 0;
         resStep1Off = -1;
 
-        long resMgr28 = readPtr(step1 + 0x28);
-        if (resMgr28 >= MIN_PTR && resMgr28 <= 0xFFFFFFF0L) {
-            foundRes |= probeResMgr(resMgr28, 0x28, player, "step1(0x28)", 0x28);
-        }
-
         for (int resMgrOff = 0x04; resMgrOff <= 0x80; resMgrOff += 4) {
-            if (resMgrOff == 0x24 || resMgrOff == 0x28) continue;
+            if (resMgrOff == 0x24) continue;
             long resMgr = readPtr(step1 + resMgrOff);
             if (resMgr < MIN_PTR || resMgr > 0xFFFFFFF0L) continue;
             foundRes |= probeResMgr(resMgr, resMgrOff, player, "step1", resMgrOff);
@@ -208,7 +203,7 @@ public class EntityManager {
                 int resCnt = memory.readInt(resMgr + cntOff);
                 if (resCnt <= 0 || resCnt > 200) continue;
 
-                int nearHits = 0, gridCount = 0;
+                int nearHits = 0, smallIdCount = 0;
                 StringBuilder info = new StringBuilder();
                 int limit = Math.min(resCnt, 40);
 
@@ -224,27 +219,25 @@ public class EntityManager {
                     if (d > 200.0f) continue;
 
                     nearHits++;
-                    if (isGridAligned(x, z)) gridCount++;
+                    int rid = memory.readInt(ptr + 0x04);
+                    if (rid > 0 && rid < 0x10000) smallIdCount++;
                     if (nearHits <= 3) {
-                        int rid = memory.readInt(ptr + 0x04);
                         int rid2 = memory.readInt(ptr + 0x08);
-                        info.append(String.format(" [i=%d d=%.1f id4=0x%X id8=0x%X grid=%b]",
-                                i, d, rid, rid2, isGridAligned(x, z)));
+                        info.append(String.format(" [i=%d d=%.1f id4=0x%X id8=0x%X]",
+                                i, d, rid, rid2));
                     }
                 }
 
                 if (nearHits > 0) {
-                    boolean isGrid = gridCount > nearHits / 2;
-                    logInfo(String.format("[SCAN] RES src=%s mgrOff=0x%X arrOff=0x%X cntOff=0x%X cnt=%d near=%d grid=%d/%d%s%s",
-                            src, mgrOff, arrOff, cntOff, resCnt, nearHits, gridCount, nearHits,
-                            isGrid ? " [TERRAIN-SKIP]" : "", info.toString()));
+                    boolean hasSmallIds = smallIdCount > 0;
+                    logInfo(String.format("[SCAN] RES src=%s mgrOff=0x%X arrOff=0x%X cntOff=0x%X cnt=%d near=%d smallId=%d/%d%s%s",
+                            src, mgrOff, arrOff, cntOff, resCnt, nearHits, smallIdCount, nearHits,
+                            hasSmallIds ? " [RESOURCE]" : "", info.toString()));
                     found = true;
 
-                    if (step1OffParam >= 0 && !isGrid) {
-                        int score = nearHits * 10;
-                        if (step1OffParam == 0x28) score += 50;
-                        int bestScore = bestResNear;
-                        if (score > bestScore) {
+                    if (step1OffParam >= 0 && hasSmallIds) {
+                        int score = smallIdCount * 100 + nearHits;
+                        if (score > bestResNear) {
                             bestResNear = score;
                             resStep1Off = step1OffParam;
                             resArrOff = arrOff;
@@ -255,10 +248,6 @@ public class EntityManager {
             }
         }
         return found;
-    }
-
-    private boolean isGridAligned(float x, float z) {
-        return (x % 64.0f == 0.0f) && (z % 64.0f == 0.0f);
     }
 
     private void probeNamesOnChain(long step1, Player player) {
@@ -474,7 +463,6 @@ public class EntityManager {
             float y = memory.readFloat(ep + 0x40);
             float z = memory.readFloat(ep + 0x44);
             if (!isValidPos(x, y, z)) continue;
-            if (isGridAligned(x, z)) continue;
             float dist = dist3D(x, y, z, player);
             if (dist > MAT_MAX_DIST) continue;
 
