@@ -98,12 +98,19 @@ public class EntityManager {
                     mobCache.size(), materialCache.size(), confirmed, MIN_STABLE));
             for (Entity e : materialCache.values()) {
                 Integer sc = stableCount.get((int)(e.getBaseAddress() & 0x7FFFFFFFL));
-                int type = memory.readInt(e.getBaseAddress() + GameConstants.OFFSET_TYPE);
                 String name = e.getName() != null ? e.getName() : "?";
-                logInfo(String.format("[DETECT]   addr=0x%X type=%d name=%s pos=(%.1f,%.1f,%.1f) dist=%.1f stable=%d",
-                        e.getBaseAddress(), type, name,
+                String matchInfo = "";
+                if (resourceDb != null) {
+                    ResourceSpawn sp = resourceDb.matchToSpawn(e.getX(), e.getY(), e.getZ());
+                    if (sp != null) {
+                        float md = sp.distanceTo(e.getX(), e.getY(), e.getZ());
+                        matchInfo = String.format(" dbMatch=%s(%.0fm)", sp.getName(), md);
+                    }
+                }
+                logInfo(String.format("[DETECT]   addr=0x%X name=%s pos=(%.1f,%.1f,%.1f) dist=%.1f stable=%d%s",
+                        e.getBaseAddress(), name,
                         e.getX(), e.getY(), e.getZ(), e.getDistance(),
-                        sc != null ? sc : 0));
+                        sc != null ? sc : 0, matchInfo));
             }
         }
 
@@ -477,12 +484,18 @@ public class EntityManager {
         long step1 = readPtr(rootVal + 0x18);
         if (step1 < MIN_PTR) return;
 
+        // Track which array pointers we've already scanned to avoid duplicate chains
+        Set<Long> scannedArrays = new HashSet<>();
+
         for (int[] ch : resChains) {
             long resMgr = readPtr(step1 + ch[0]);
             if (resMgr < MIN_PTR) continue;
             long arr = readPtr(resMgr + ch[1]);
             int cnt = memory.readInt(resMgr + ch[2]);
             if (arr < MIN_PTR || cnt <= 0 || cnt > 800) continue;
+
+            // Skip if we already scanned this exact array pointer
+            if (!scannedArrays.add(arr)) continue;
 
             if (tickCount <= 2) {
                 logInfo(String.format("[RES] chain step1+0x%X arr=0x%X cnt=%d", ch[0], arr, cnt));
@@ -501,6 +514,8 @@ public class EntityManager {
                 int uid = (int) (ep & 0x7FFFFFFFL);
                 if (!matIds.contains(uid)) {
                     matIds.add(uid);
+                    // Resource chain entities use TYPE_MATERIAL — offset 0xB4 is not
+                    // a valid type field for resource structs
                     Entity ent = getOrCreate(materialCache, uid, GameConstants.TYPE_MATERIAL);
                     fill(ent, ep, x, y, z, GameConstants.TYPE_MATERIAL, player);
                     if (tickCount % 50 == 0) {
@@ -534,11 +549,18 @@ public class EntityManager {
         ent.calculateDistance(player);
 
         // Identify material by position matching against known spawn database
-        if (type != GameConstants.TYPE_MOB && resourceDb != null && ent.getName() == null) {
+        if (type != GameConstants.TYPE_MOB && resourceDb != null) {
             ResourceSpawn sp = resourceDb.matchToSpawn(x, y, z);
             if (sp != null) {
                 ent.setName(sp.getName());
                 ent.setTemplateId(sp.getTemplateId());
+            } else if (ent.getName() == null) {
+                // NPC type=7 is always a resource node even without DB match
+                if (type == GameConstants.TYPE_MATERIAL) {
+                    ent.setName("Material");
+                } else {
+                    ent.setName("Recurso");
+                }
             }
         }
     }
