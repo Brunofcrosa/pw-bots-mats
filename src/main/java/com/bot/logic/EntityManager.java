@@ -26,7 +26,7 @@ public class EntityManager {
     private boolean firstLog = false;
 
     private static final float MOB_MAX_DIST     = 300.0f;
-    private static final float MAT_MAX_DIST     = 100.0f;
+    private static final float MAT_MAX_DIST     = 150.0f;
     private static final float MOVE_THRESH      = 0.3f;
     private static final float MOB_OVERLAP_DIST = 5.0f;
     private static final int   MIN_STABLE       = 5;
