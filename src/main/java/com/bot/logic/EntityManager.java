@@ -22,6 +22,10 @@ public class EntityManager {
 
     private final List<int[]> resChains = new ArrayList<>();
 
+    // Maps world smallId (offset +0x04) to resource name, learned from position-matched entities
+    private final Map<Integer, String> smallIdToName = new HashMap<>();
+    private final Map<Integer, Integer> smallIdToTemplateId = new HashMap<>();
+
     private int tickCount = 0;
     private boolean firstLog = false;
 
@@ -99,15 +103,18 @@ public class EntityManager {
             for (Entity e : materialCache.values()) {
                 Integer sc = stableCount.get((int)(e.getBaseAddress() & 0x7FFFFFFFL));
                 String name = e.getName() != null ? e.getName() : "?";
+                long ep = e.getBaseAddress();
+                int sid = memory.readInt(ep + 0x04);
                 String matchInfo = "";
                 if (resourceDb != null) {
                     ResourceSpawn sp = resourceDb.matchToSpawn(e.getX(), e.getY(), e.getZ());
                     if (sp != null) {
                         float md = sp.distanceTo(e.getX(), e.getY(), e.getZ());
                         matchInfo = String.format(" dbMatch=%s(%.0fm)", sp.getName(), md);
+                    } else if (smallIdToName.containsKey(sid)) {
+                        matchInfo = String.format(" idMatch=sid%d->%s", sid, smallIdToName.get(sid));
                     } else {
                         // Dump raw ID fields for unmatched entities to help debug
-                        long ep = e.getBaseAddress();
                         StringBuilder ids = new StringBuilder(" rawIds=[");
                         for (int off : new int[]{0x04, 0x08, 0x0C, 0x10, 0x14, 0x24, 0xB4, 0xB8, 0x190}) {
                             int v = memory.readInt(ep + off);
@@ -117,8 +124,8 @@ public class EntityManager {
                         matchInfo = ids.toString();
                     }
                 }
-                logInfo(String.format("[DETECT]   addr=0x%X name=%s pos=(%.1f,%.1f,%.1f) dist=%.1f stable=%d%s",
-                        e.getBaseAddress(), name,
+                logInfo(String.format("[DETECT]   addr=0x%X name=%s sid=%d pos=(%.1f,%.1f,%.1f) dist=%.1f stable=%d%s",
+                        ep, name, sid,
                         e.getX(), e.getY(), e.getZ(), e.getDistance(),
                         sc != null ? sc : 0, matchInfo));
             }
@@ -558,18 +565,34 @@ public class EntityManager {
         ent.setType(type);
         ent.calculateDistance(player);
 
+        // Read the world smallId from entity struct offset +0x04
+        int smallId = memory.readInt(ep + 0x04);
+
         // Identify material by position matching against known spawn database
         if (type != GameConstants.TYPE_MOB && resourceDb != null) {
             ResourceSpawn sp = resourceDb.matchToSpawn(x, y, z);
             if (sp != null) {
                 ent.setName(sp.getName());
                 ent.setTemplateId(sp.getTemplateId());
+                // Learn this smallId → name mapping for future propagation
+                if (smallId > 0 && smallId < 0x10000) {
+                    smallIdToName.put(smallId, sp.getName());
+                    smallIdToTemplateId.put(smallId, sp.getTemplateId());
+                }
             } else {
                 // Try to read template ID from entity memory for ID-based lookup
                 String nameById = tryReadTemplateId(ent, ep, type);
                 if (nameById != null) {
                     ent.setName(nameById);
-                } else if (ent.getName() == null) {
+                }
+                // Fallback: check smallId → name mapping learned from other entities
+                else if (smallId > 0 && smallId < 0x10000 && smallIdToName.containsKey(smallId)) {
+                    ent.setName(smallIdToName.get(smallId));
+                    if (smallIdToTemplateId.containsKey(smallId)) {
+                        ent.setTemplateId(smallIdToTemplateId.get(smallId));
+                    }
+                }
+                else if (ent.getName() == null) {
                     ent.setName(type == GameConstants.TYPE_MATERIAL ? "Material" : "Recurso");
                 }
             }
