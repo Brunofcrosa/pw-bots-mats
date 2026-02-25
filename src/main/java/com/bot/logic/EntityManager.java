@@ -17,6 +17,11 @@ public class EntityManager {
     private final Map<Integer, float[]> prevPositions = new HashMap<>();
     private final Map<Integer, Integer> stableCount  = new HashMap<>();
 
+    private int resStep1Off = -1;
+    private int resArrOff = -1;
+    private int resCntOff = -1;
+    private int bestResNear = 0;
+
     private int tickCount = 0;
     private boolean firstLog = false;
 
@@ -43,6 +48,7 @@ public class EntityManager {
         Set<Integer> matIds = new HashSet<>();
 
         scanNpcArray(moduleBase, player, mobIds, matIds);
+        scanResourceArray(moduleBase, player, matIds);
 
         mobCache.keySet().retainAll(mobIds);
         materialCache.keySet().retainAll(matIds);
@@ -162,33 +168,28 @@ public class EntityManager {
 
         logInfo("[SCAN] --- Buscando resource chain (lista de recursos separada) ---");
         boolean foundRes = false;
+        bestResNear = 0;
         for (int resMgrOff = 0x04; resMgrOff <= 0x80; resMgrOff += 4) {
             if (resMgrOff == 0x24) continue;
             long resMgr = readPtr(step1 + resMgrOff);
             if (resMgr < MIN_PTR || resMgr > 0xFFFFFFF0L) continue;
-            foundRes |= probeResMgr(resMgr, resMgrOff, player, "step1");
+            foundRes |= probeResMgr(resMgr, resMgrOff, player, "step1", resMgrOff);
         }
 
-        long matRoot = readPtr(moduleBase + GameConstants.MATTER_BASE_OFFSET);
-        if (matRoot >= MIN_PTR && matRoot <= 0xFFFFFFF0L) {
-            logInfo(String.format("[SCAN] Tentando MATTER_BASE 0x%X root=0x%X", GameConstants.MATTER_BASE_OFFSET, matRoot));
-            for (int off1 = 0x04; off1 <= 0x60; off1 += 4) {
-                long sub = readPtr(matRoot + off1);
-                if (sub < MIN_PTR || sub > 0xFFFFFFF0L) continue;
-                for (int off2 = 0x04; off2 <= 0x60; off2 += 4) {
-                    long resMgr = readPtr(sub + off2);
-                    if (resMgr < MIN_PTR || resMgr > 0xFFFFFFF0L) continue;
-                    foundRes |= probeResMgr(resMgr, off2, player,
-                            String.format("matBase+0x%X+0x%X", off1, off2));
-                }
-            }
+        if (resStep1Off >= 0) {
+            logInfo(String.format("[SCAN] BEST resource chain: step1+0x%X arr=0x%X cnt=0x%X (near=%d)",
+                    resStep1Off, resArrOff, resCntOff, bestResNear));
+            probeNamesOnChain(step1, player);
+        } else {
+            logInfo("[SCAN] Nenhuma resource chain encontrada via step1");
         }
 
-        if (!foundRes) logInfo("[SCAN] Nenhuma resource chain encontrada");
+        probeNpcNames(arr, cnt, player);
+
         logInfo("=== [SCAN] FIM ===");
     }
 
-    private boolean probeResMgr(long resMgr, int mgrOff, Player player, String src) {
+    private boolean probeResMgr(long resMgr, int mgrOff, Player player, String src, int step1OffParam) {
         boolean found = false;
         for (int arrOff = 0x04; arrOff <= 0xC0; arrOff += 4) {
             long resArr = readPtr(resMgr + arrOff);
@@ -198,9 +199,9 @@ public class EntityManager {
             for (int cntOff : cntTry) {
                 if (cntOff < 0 || cntOff > 0xC4 || cntOff == arrOff) continue;
                 int resCnt = memory.readInt(resMgr + cntOff);
-                if (resCnt <= 0 || resCnt > 800) continue;
+                if (resCnt <= 0 || resCnt > 200) continue;
 
-                int nearHits = 0, nameHits = 0;
+                int nearHits = 0;
                 StringBuilder info = new StringBuilder();
                 int limit = Math.min(resCnt, 40);
 
@@ -208,90 +209,160 @@ public class EntityManager {
                     long ptr = readPtr(resArr + (long) i * 4);
                     if (ptr < MIN_PTR) continue;
 
-                    long[] eps = {ptr, readPtr(ptr + 4)};
-                    String[] labels = {"direct", "+4deref"};
-                    for (int ci = 0; ci < 2; ci++) {
-                        long ep = eps[ci];
-                        if (ep < MIN_PTR) continue;
+                    float x = memory.readFloat(ptr + 0x3C);
+                    float y = memory.readFloat(ptr + 0x40);
+                    float z = memory.readFloat(ptr + 0x44);
+                    if (!isValidPos(x, y, z)) continue;
+                    float d = dist3D(x, y, z, player);
+                    if (d < 0.5f || d > 200.0f) continue;
 
-                        float x = memory.readFloat(ep + 0x3C);
-                        float y = memory.readFloat(ep + 0x40);
-                        float z = memory.readFloat(ep + 0x44);
-                        if (!isValidPos(x, y, z)) continue;
-                        float d = dist3D(x, y, z, player);
-                        if (d < 0.5f || d > 200.0f) continue;
-
-                        nearHits++;
-                        String name = tryReadResName(ep);
-                        if (name != null) nameHits++;
-
-                        if (nearHits <= 5) {
-                            int rid = memory.readInt(ep + 0x04);
-                            info.append(String.format(" [i=%d d=%.1f %s id=%d name=%s]",
-                                    i, d, labels[ci], rid, name != null ? "'" + name + "'" : "?"));
-                        }
-                        break;
+                    nearHits++;
+                    if (nearHits <= 3) {
+                        int rid = memory.readInt(ptr + 0x04);
+                        int rid2 = memory.readInt(ptr + 0x08);
+                        info.append(String.format(" [i=%d d=%.1f id4=0x%X id8=0x%X]",
+                                i, d, rid, rid2));
                     }
                 }
 
                 if (nearHits > 0) {
-                    logInfo(String.format("[SCAN] RES src=%s mgrOff=0x%X arrOff=0x%X cntOff=0x%X cnt=%d near=%d names=%d%s",
-                            src, mgrOff, arrOff, cntOff, resCnt, nearHits, nameHits, info.toString()));
+                    logInfo(String.format("[SCAN] RES src=%s mgrOff=0x%X arrOff=0x%X cntOff=0x%X cnt=%d near=%d%s",
+                            src, mgrOff, arrOff, cntOff, resCnt, nearHits, info.toString()));
                     found = true;
+                    if (step1OffParam >= 0 && nearHits > bestResNear) {
+                        bestResNear = nearHits;
+                        resStep1Off = step1OffParam;
+                        resArrOff = arrOff;
+                        resCntOff = cntOff;
+                    }
                 }
             }
         }
         return found;
     }
 
-    private String tryReadResName(long ep) {
-        String s;
-        try {
-            s = memory.readString(ep + 0x164, 30);
-            if (isValidName(s)) return "(direct+164)" + s;
-        } catch (Exception ignored) {}
+    private void probeNamesOnChain(long step1, Player player) {
+        if (resStep1Off < 0) return;
+        long resMgr = readPtr(step1 + resStep1Off);
+        if (resMgr < MIN_PTR) return;
+        long arr = readPtr(resMgr + resArrOff);
+        int cnt = memory.readInt(resMgr + resCntOff);
+        if (arr < MIN_PTR || cnt <= 0) return;
 
-        try {
-            long namePtr = readPtr(ep + 0x164);
-            if (namePtr >= MIN_PTR) {
-                s = memory.readString(namePtr, 30);
-                if (isValidName(s)) return "(ptr+164)" + s;
-            }
-        } catch (Exception ignored) {}
-
-        try {
-            long subPtr = readPtr(ep);
-            if (subPtr >= MIN_PTR) {
-                s = memory.readString(subPtr + 0x164, 30);
-                if (isValidName(s)) return "(deref+164)" + s;
-            }
-        } catch (Exception ignored) {}
-
-        try {
-            s = memory.readString(ep + 0x23C, 30);
-            if (isValidName(s)) return "(direct+23C)" + s;
-        } catch (Exception ignored) {}
-
-        try {
-            long namePtr = readPtr(ep + 0x23C);
-            if (namePtr >= MIN_PTR) {
-                s = memory.readString(namePtr, 30);
-                if (isValidName(s)) return "(ptr+23C)" + s;
-            }
-        } catch (Exception ignored) {}
-
-        return null;
+        logInfo("[SCAN] --- Name probe on resource entities ---");
+        int probed = 0;
+        for (int i = 0; i < Math.min(cnt, 20) && probed < 3; i++) {
+            long ep = readPtr(arr + (long) i * 4);
+            if (ep < MIN_PTR) continue;
+            float x = memory.readFloat(ep + 0x3C);
+            float y = memory.readFloat(ep + 0x40);
+            float z = memory.readFloat(ep + 0x44);
+            if (!isValidPos(x, y, z)) continue;
+            float d = dist3D(x, y, z, player);
+            if (d > 200.0f) continue;
+            probeEntityNames(ep, d, "RES");
+            probed++;
+        }
+        if (probed == 0) logInfo("[SCAN] No valid resource entities to probe names");
     }
 
-    private boolean isValidName(String s) {
-        if (s == null || s.isEmpty() || s.equals("Unknown") || s.length() > 60) return false;
-        int printable = 0;
-        for (int i = 0; i < s.length(); i++) {
+    private void probeNpcNames(long arr, int cnt, Player player) {
+        logInfo("[SCAN] --- Name probe on NPC type!=6 entities ---");
+        int probed = 0;
+        for (int i = 0; i < cnt && probed < 2; i++) {
+            long ep = readPtr(arr + (long) i * 4);
+            if (ep < MIN_PTR) continue;
+            int type = memory.readInt(ep + GameConstants.OFFSET_TYPE);
+            if (type == GameConstants.TYPE_MOB) continue;
+            float x = memory.readFloat(ep + 0x3C);
+            float y = memory.readFloat(ep + 0x40);
+            float z = memory.readFloat(ep + 0x44);
+            if (!isValidPos(x, y, z)) continue;
+            float d = dist3D(x, y, z, player);
+            probeEntityNames(ep, d, "NPC-type" + type);
+            probed++;
+        }
+        if (probed == 0) logInfo("[SCAN] No NPC type!=6 entities found for name probe");
+    }
+
+    private void probeEntityNames(long ep, float dist, String label) {
+        logInfo(String.format("[NAME-PROBE] %s ep=0x%X dist=%.1f", label, ep, dist));
+        int[] offsets = {
+            0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x30, 0x34, 0x38,
+            0x58, 0x5C, 0x60, 0x64, 0x68, 0x6C, 0x70, 0x74, 0x78, 0x7C, 0x80,
+            0xB0, 0xB4, 0xB8, 0xBC, 0xC0, 0xC4, 0xC8, 0xCC, 0xD0,
+            0x100, 0x104, 0x108, 0x10C, 0x110, 0x114, 0x118, 0x11C, 0x120,
+            0x148, 0x14C, 0x150, 0x154, 0x158, 0x15C, 0x160, 0x164, 0x168, 0x16C, 0x170,
+            0x180, 0x184, 0x188, 0x18C, 0x190, 0x194, 0x198, 0x19C, 0x1A0,
+            0x1C0, 0x1D0, 0x1E0, 0x1F0, 0x200, 0x210, 0x220, 0x230, 0x234, 0x238, 0x23C, 0x240,
+            0x268, 0x26C, 0x270, 0x274, 0x278, 0x27C, 0x280, 0x284, 0x288, 0x28C, 0x290,
+            0x2C0, 0x2D0, 0x2E0, 0x2F0, 0x300, 0x310, 0x320, 0x340, 0x360, 0x380, 0x3A0, 0x3C0
+        };
+        for (int off : offsets) {
+            try {
+                long ptr = readPtr(ep + off);
+                if (ptr >= MIN_PTR && ptr <= 0x7FFFFFFFL) {
+                    String s = memory.readString(ptr, 20);
+                    if (isRealName(s)) {
+                        logInfo(String.format("[NAME-PROBE]   ptr@+0x%X -> 0x%X = '%s'", off, ptr, clip(s)));
+                    }
+                }
+            } catch (Exception ignored) {}
+            try {
+                String s = memory.readString(ep + off, 20);
+                if (isRealName(s)) {
+                    logInfo(String.format("[NAME-PROBE]   wchar@+0x%X = '%s'", off, clip(s)));
+                }
+            } catch (Exception ignored) {}
+        }
+        long sub = readPtr(ep);
+        if (sub >= MIN_PTR && sub <= 0x7FFFFFFFL) {
+            for (int off : new int[]{0x160, 0x164, 0x168, 0x23C, 0x240, 0x280, 0x284, 0x288}) {
+                try {
+                    long ptr = readPtr(sub + off);
+                    if (ptr >= MIN_PTR && ptr <= 0x7FFFFFFFL) {
+                        String s = memory.readString(ptr, 20);
+                        if (isRealName(s)) {
+                            logInfo(String.format("[NAME-PROBE]   [ep]+0x%X -> 0x%X = '%s'", off, ptr, clip(s)));
+                        }
+                    }
+                } catch (Exception ignored) {}
+                try {
+                    String s = memory.readString(sub + off, 20);
+                    if (isRealName(s)) {
+                        logInfo(String.format("[NAME-PROBE]   [ep]wchar@+0x%X = '%s'", off, clip(s)));
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private boolean isRealName(String s) {
+        if (s == null || s.isEmpty() || s.equals("Unknown")) return false;
+        int len = 0, good = 0;
+        for (int i = 0; i < s.length() && i < 60; i++) {
             char c = s.charAt(i);
             if (c == 0) break;
-            if ((c >= 0x20 && c < 0x7F) || c >= 0x00C0) printable++;
+            len++;
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == ' ' || c == '_' || c == '-' || c == '(' || c == ')') {
+                good++;
+            } else if (c >= 0x4E00 && c <= 0x9FFF) {
+                good++;
+            } else if (c >= 0x3000 && c <= 0x30FF) {
+                good++;
+            } else if (c >= 0x00C0 && c <= 0x024F) {
+                good++;
+            }
         }
-        return printable >= 2;
+        return len >= 2 && good >= 2 && (float) good / len >= 0.6f;
+    }
+
+    private String clip(String s) {
+        if (s == null) return "?";
+        int end = s.indexOf(0);
+        if (end >= 0) s = s.substring(0, end);
+        return s.length() > 40 ? s.substring(0, 40) : s;
     }
 
     private void scanNpcArray(long moduleBase, Player player, Set<Integer> mobIds, Set<Integer> matIds) {
@@ -360,17 +431,42 @@ public class EntityManager {
         }
     }
 
-    private boolean isNearAnyMob(float x, float y, float z) {
-        for (Entity mob : mobCache.values()) {
-            float dx = x - mob.getX();
-            float dy = y - mob.getY();
-            float dz = z - mob.getZ();
-            float d = dx * dx + dy * dy + dz * dz;
-            if (d < MOB_OVERLAP_DIST * MOB_OVERLAP_DIST) {
-                return true;
+    private void scanResourceArray(long moduleBase, Player player, Set<Integer> matIds) {
+        if (resStep1Off < 0) return;
+        long rootVal = readPtr(moduleBase + GameConstants.BASE_OFFSET);
+        if (rootVal < MIN_PTR) return;
+        long step1 = readPtr(rootVal + 0x18);
+        if (step1 < MIN_PTR) return;
+        long resMgr = readPtr(step1 + resStep1Off);
+        if (resMgr < MIN_PTR) return;
+        long arr = readPtr(resMgr + resArrOff);
+        int cnt = memory.readInt(resMgr + resCntOff);
+        if (arr < MIN_PTR || cnt <= 0 || cnt > 800) return;
+
+        if (tickCount <= 2) {
+            logInfo(String.format("[RES] chain ok - resMgr=0x%X arr=0x%X cnt=%d", resMgr, arr, cnt));
+        }
+
+        for (int i = 0; i < cnt; i++) {
+            long ep = readPtr(arr + (long) i * 4);
+            if (ep < MIN_PTR) continue;
+            float x = memory.readFloat(ep + 0x3C);
+            float y = memory.readFloat(ep + 0x40);
+            float z = memory.readFloat(ep + 0x44);
+            if (!isValidPos(x, y, z)) continue;
+            float dist = dist3D(x, y, z, player);
+            if (dist > MAT_MAX_DIST || dist < 0.1f) continue;
+
+            int uid = (int) (ep & 0x7FFFFFFFL);
+            if (!matIds.contains(uid)) {
+                matIds.add(uid);
+                Entity ent = getOrCreate(materialCache, uid, GameConstants.TYPE_MATERIAL);
+                fill(ent, ep, x, y, z, GameConstants.TYPE_MATERIAL, player);
+                if (tickCount % 50 == 0) {
+                    logInfo(String.format("[RES-OK] ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)", ep, dist, x, y, z));
+                }
             }
         }
-        return false;
     }
 
     private long readPtr(long addr) {
