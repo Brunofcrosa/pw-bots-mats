@@ -259,14 +259,20 @@ public class EntityManager {
                 continue;
             }
 
-            if (dist > MAT_MAX_DIST || dist < 0.1f) continue;
-
-            if (isNearAnyMob(x, y, z)) continue;
+            if (dist > MAT_MAX_DIST || dist < 0.1f) {
+                if (tickCount % 50 == 0) {
+                    logInfo(String.format("[MAT-SKIP] type=%d ep=0x%X dist=%.1f (out of range)", type, ep, dist));
+                }
+                continue;
+            }
 
             int uid = (int) (ep & 0x7FFFFFFFL);
             matIds.add(uid);
             Entity ent = getOrCreate(materialCache, uid, type);
             fill(ent, ep, x, y, z, type, player);
+            if (tickCount % 50 == 0) {
+                logInfo(String.format("[MAT-OK] type=%d ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)", type, ep, dist, x, y, z));
+            }
         }
     }
 
