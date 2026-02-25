@@ -177,11 +177,11 @@ public class ResourceDatabase {
 
     /**
      * Match a detected entity position to a known spawn point.
-     * Uses 40m radius — PW resource nodes can spawn offset from their
-     * defined spawn center, and different server versions may differ.
+     * Uses 80m radius — PW resource nodes can spawn with a large offset
+     * from their defined spawn center in the npcgen files.
      */
     public ResourceSpawn matchToSpawn(float ex, float ey, float ez) {
-        return findNearest(ex, ey, ez, 40.0f);
+        return findNearest(ex, ey, ez, 80.0f);
     }
 
     /**

@@ -105,6 +105,16 @@ public class EntityManager {
                     if (sp != null) {
                         float md = sp.distanceTo(e.getX(), e.getY(), e.getZ());
                         matchInfo = String.format(" dbMatch=%s(%.0fm)", sp.getName(), md);
+                    } else {
+                        // Dump raw ID fields for unmatched entities to help debug
+                        long ep = e.getBaseAddress();
+                        StringBuilder ids = new StringBuilder(" rawIds=[");
+                        for (int off : new int[]{0x04, 0x08, 0x0C, 0x10, 0x14, 0x24, 0xB4, 0xB8, 0x190}) {
+                            int v = memory.readInt(ep + off);
+                            ids.append(String.format("+0x%X=%d ", off, v));
+                        }
+                        ids.append("]");
+                        matchInfo = ids.toString();
                     }
                 }
                 logInfo(String.format("[DETECT]   addr=0x%X name=%s pos=(%.1f,%.1f,%.1f) dist=%.1f stable=%d%s",
@@ -554,15 +564,52 @@ public class EntityManager {
             if (sp != null) {
                 ent.setName(sp.getName());
                 ent.setTemplateId(sp.getTemplateId());
-            } else if (ent.getName() == null) {
-                // NPC type=7 is always a resource node even without DB match
-                if (type == GameConstants.TYPE_MATERIAL) {
-                    ent.setName("Material");
-                } else {
-                    ent.setName("Recurso");
+            } else {
+                // Try to read template ID from entity memory for ID-based lookup
+                String nameById = tryReadTemplateId(ent, ep, type);
+                if (nameById != null) {
+                    ent.setName(nameById);
+                } else if (ent.getName() == null) {
+                    ent.setName(type == GameConstants.TYPE_MATERIAL ? "Material" : "Recurso");
                 }
             }
         }
+    }
+
+    /**
+     * Try to read a template ID from the entity structure and match it
+     * against the resource database. Probes several known offsets.
+     */
+    private String tryReadTemplateId(Entity ent, long ep, int type) {
+        // Offsets that commonly hold template/type IDs in PW entity structs
+        int[] probeOffsets = { 0x04, 0x08, 0x0C, 0x10, 0x14, 0x24, 0xB8, 0xBC };
+        for (int off : probeOffsets) {
+            int val = memory.readInt(ep + off);
+            if (val >= 3074 && val <= 3550) {
+                String name = ResourceDatabase.getNameById(val);
+                if (name != null) {
+                    ent.setTemplateId(val);
+                    return name;
+                }
+            }
+        }
+        // For NPC type=7: also try via [ep] → vtable-like indirection
+        if (type == GameConstants.TYPE_MATERIAL) {
+            long vt = readPtr(ep);
+            if (vt >= MIN_PTR && vt < 0x7FFFFFFFL) {
+                for (int off : new int[]{ 0x04, 0x08, 0x0C, 0x10 }) {
+                    int val = memory.readInt(vt + off);
+                    if (val >= 3074 && val <= 3550) {
+                        String name = ResourceDatabase.getNameById(val);
+                        if (name != null) {
+                            ent.setTemplateId(val);
+                            return name;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private Entity getOrCreate(Map<Integer, Entity> cache, int uid, int type) {
