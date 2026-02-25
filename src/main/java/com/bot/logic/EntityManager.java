@@ -47,6 +47,9 @@ public class EntityManager {
         mobCache.keySet().retainAll(mobIds);
         materialCache.keySet().retainAll(matIds);
 
+        stableCount.keySet().retainAll(materialCache.keySet());
+        prevPositions.keySet().retainAll(materialCache.keySet());
+
         List<Integer> toRemove = new ArrayList<>();
         for (Map.Entry<Integer, Entity> entry : materialCache.entrySet()) {
             int uid = entry.getKey();
@@ -80,8 +83,9 @@ public class EntityManager {
         if (!firstLog && tickCount >= 10) {
             firstLog = true;
             int confirmed = 0;
-            for (Integer sc : stableCount.values()) {
-                if (sc >= MIN_STABLE) confirmed++;
+            for (Map.Entry<Integer, Entity> entry : materialCache.entrySet()) {
+                Integer sc = stableCount.get(entry.getKey());
+                if (sc != null && sc >= MIN_STABLE) confirmed++;
             }
             logInfo(String.format("[DETECT] %d mobs, %d material candidates, %d confirmed (stable>=%d)",
                     mobCache.size(), materialCache.size(), confirmed, MIN_STABLE));
@@ -99,8 +103,9 @@ public class EntityManager {
             Entity nearMat = getNearestMaterial();
             Entity nearMob = getNearestMob();
             int confirmed = 0;
-            for (Integer sc : stableCount.values()) {
-                if (sc >= MIN_STABLE) confirmed++;
+            for (Map.Entry<Integer, Entity> entry : materialCache.entrySet()) {
+                Integer sc = stableCount.get(entry.getKey());
+                if (sc != null && sc >= MIN_STABLE) confirmed++;
             }
             logInfo(String.format("[STATUS] pos=(%.1f,%.1f,%.1f) mobs=%d mats=%d(confirmed=%d) nearMat=%.1fm nearMob=%.1fm",
                     player.getX(), player.getY(), player.getZ(),
@@ -156,21 +161,15 @@ public class EntityManager {
         logInfo(String.format("[SCAN] NPC array types: %s (total=%d, near<30m=%d)", typeCounts, cnt, nearCount));
 
         logInfo("[SCAN] --- Buscando chains alternativas para materiais ---");
-        int[] rootOffs = {0x14, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x30, 0x34, 0x38, 0x3C,
-                          0x40, 0x44, 0x48, 0x4C, 0x50, 0x54, 0x58, 0x5C, 0x60, 0x64, 0x68};
-        for (int rootOff : rootOffs) {
+        for (int rootOff = 0x04; rootOff <= 0x80; rootOff += 4) {
             long sub = readPtr(rootVal + rootOff);
             if (sub < MIN_PTR || sub > 0xFFFFFFF0L) continue;
 
-            int[] mgrOffs = {0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x30};
-            for (int mgrOff : mgrOffs) {
+            for (int mgrOff = 0x00; mgrOff <= 0xE4; mgrOff += 4) {
                 long subMgr = (mgrOff == 0x00) ? sub : readPtr(sub + mgrOff);
                 if (subMgr < MIN_PTR || subMgr > 0xFFFFFFF0L) continue;
 
-                int[] arrOffs = {0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x30,
-                                 0x34, 0x38, 0x3C, 0x40, 0x44, 0x48, 0x4C, 0x50, 0x54, 0x58, 0x5C, 0x60,
-                                 0x64, 0x68, 0x6C, 0x70, 0x74, 0x78, 0x7C, 0x80};
-                for (int arrOff : arrOffs) {
+                for (int arrOff = 0x04; arrOff <= 0xC0; arrOff += 4) {
                     long subArr = readPtr(subMgr + arrOff);
                     int subCnt = memory.readInt(subMgr + arrOff + 4);
                     if (subArr < MIN_PTR || subCnt <= 0 || subCnt > 500) continue;
