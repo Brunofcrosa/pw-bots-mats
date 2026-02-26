@@ -18,6 +18,7 @@ public class BotInterface extends JFrame {
     private JTextArea logArea;
     private JButton btnStart, btnStop, btnSnapshot, btnCompareDec, btnCompareUnchanged;
     private JCheckBox chkDiagnosticLogs;
+    private java.util.function.Consumer<Boolean> onBotToggle;
 
     public BotInterface() {
         setTitle("PW Bot Master - Multi-Farm");
@@ -59,11 +60,14 @@ public class BotInterface extends JFrame {
 
     private JPanel createMaterialsPanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(BorderFactory.createTitledBorder(" Materiais Próximos "));
+
+        JPanel matPanel = new JPanel(new BorderLayout());
+        matPanel.setBorder(BorderFactory.createTitledBorder(" Lista de Materiais (Detectados) "));
         matListModel = new DefaultListModel<>();
         matList = new JList<>(matListModel);
         matList.setFont(new Font("Monospaced", Font.PLAIN, 12));
-        panel.add(new JScrollPane(matList), BorderLayout.CENTER);
+        matPanel.add(new JScrollPane(matList), BorderLayout.CENTER);
+        panel.add(matPanel, BorderLayout.CENTER);
 
         JPanel scannerPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         btnSnapshot = new JButton("1. Snapshot");
@@ -118,6 +122,11 @@ public class BotInterface extends JFrame {
         statusLabel.setText(run ? " Status: Rodando" : " Status: Parado");
         statusLabel.setForeground(run ? new Color(0, 150, 0) : Color.RED);
         log(run ? "Bot iniciado." : "Bot parado.");
+        if (onBotToggle != null) onBotToggle.accept(run);
+    }
+
+    public void setOnBotToggle(java.util.function.Consumer<Boolean> callback) {
+        this.onBotToggle = callback;
     }
 
     private JProgressBar createProgressBar(Color color, String text) {
@@ -155,6 +164,12 @@ public class BotInterface extends JFrame {
     private void updateBar(JProgressBar bar, int cur, int max) {
         if (max <= 0) return;
         bar.setMaximum(max); bar.setValue(cur); bar.setString(cur + " / " + max);
+    }
+
+    public void updateBotStatus(String stateName, int materialsCount) {
+        SwingUtilities.invokeLater(() -> {
+            statusLabel.setText(String.format(" Status: %s | Materiais: %d", stateName, materialsCount));
+        });
     }
 
     public void log(String msg) {

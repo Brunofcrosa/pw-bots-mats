@@ -18,13 +18,29 @@ public class EntityManager {
     private final Map<Integer, Entity> mobCache      = new LinkedHashMap<>();
     private final Map<Integer, Entity> materialCache = new LinkedHashMap<>();
     private final Map<Integer, float[]> prevPositions = new HashMap<>();
+    private final Map<Integer, float[]> initialPositions = new HashMap<>();
     private final Map<Integer, Integer> stableCount  = new HashMap<>();
+    private final Set<Integer> resChainUids = new HashSet<>();  
 
     private final List<int[]> resChains = new ArrayList<>();
 
-    // Maps world smallId (offset +0x04) to resource name, learned from position-matched entities
+    
     private final Map<Integer, String> smallIdToName = new HashMap<>();
     private final Map<Integer, Integer> smallIdToTemplateId = new HashMap<>();
+
+    
+    
+    
+    
+    
+    private long matterManPtr = 0;            
+    private int htCountOff = -1;              
+    private int htBucketDataOff = -1;         
+    private int htBucketCountOff = -1;        
+    
+    private int matterMidOff = 0x110;         
+    private int matterTidOff = 0x114;         
+    private int matterTypeOff = 0x150;        
 
     private int tickCount = 0;
     private boolean firstLog = false;
@@ -32,9 +48,15 @@ public class EntityManager {
     private static final float MOB_MAX_DIST     = 300.0f;
     private static final float MAT_MAX_DIST     = 150.0f;
     private static final float MOVE_THRESH      = 0.3f;
+    private static final float DRIFT_THRESH     = 1.5f;   
+    private static final float DRIFT_THRESH_RES = 15.0f;  
+    private static final float MIN_MAT_DIST     = 2.0f;   
     private static final float MOB_OVERLAP_DIST = 5.0f;
     private static final int   MIN_STABLE       = 5;
     private static final long  MIN_PTR          = 0x10000L;
+
+    
+    private static final int MATTER_MINE = 2;  
 
     public EntityManager(WinMemoryReader memory, long dynamicBaseAddress, ResourceDatabase resourceDb) {
         this.memory = memory;
@@ -53,13 +75,15 @@ public class EntityManager {
         Set<Integer> matIds = new HashSet<>();
 
         scanNpcArray(moduleBase, player, mobIds, matIds);
-        scanResourceArray(moduleBase, player, matIds);
+        scanMatterHashtable(moduleBase, player, matIds);
 
         mobCache.keySet().retainAll(mobIds);
         materialCache.keySet().retainAll(matIds);
 
         stableCount.keySet().retainAll(materialCache.keySet());
         prevPositions.keySet().retainAll(materialCache.keySet());
+        initialPositions.keySet().retainAll(materialCache.keySet());
+        resChainUids.retainAll(materialCache.keySet());
 
         List<Integer> toRemove = new ArrayList<>();
         for (Map.Entry<Integer, Entity> entry : materialCache.entrySet()) {
@@ -77,11 +101,35 @@ public class EntityManager {
                 if (moved > MOVE_THRESH) {
                     toRemove.add(uid);
                     stableCount.remove(uid);
+                    initialPositions.remove(uid);
                 } else {
-                    stableCount.merge(uid, 1, Integer::sum);
+                    
+                    float[] init = initialPositions.get(uid);
+                    if (init != null) {
+                        float dix = cur[0] - init[0];
+                        float diy = cur[1] - init[1];
+                        float diz = cur[2] - init[2];
+                        float drift = (float) Math.sqrt(dix * dix + diy * diy + diz * diz);
+                        
+                        
+                        float maxDrift = resChainUids.contains(uid) ? DRIFT_THRESH_RES : DRIFT_THRESH;
+                        if (drift > maxDrift) {
+                            if (tickCount % 50 == 0 || stableCount.getOrDefault(uid, 0) >= MIN_STABLE) {
+                                logInfo(String.format("[GHOST] Removed uid=%d drift=%.2fm (max=%.1f) from initial pos", uid, drift, maxDrift));
+                            }
+                            toRemove.add(uid);
+                            stableCount.remove(uid);
+                            initialPositions.remove(uid);
+                        } else {
+                            stableCount.merge(uid, 1, Integer::sum);
+                        }
+                    } else {
+                        stableCount.merge(uid, 1, Integer::sum);
+                    }
                 }
             } else {
                 stableCount.put(uid, 1);
+                initialPositions.put(uid, cur.clone());
             }
             prevPositions.put(uid, cur);
         }
@@ -89,6 +137,8 @@ public class EntityManager {
             materialCache.remove(uid);
             matIds.remove(uid);
             prevPositions.remove(uid);
+            initialPositions.remove(uid);
+            resChainUids.remove(uid);
         }
 
         if (!firstLog && tickCount >= 10) {
@@ -119,7 +169,7 @@ public class EntityManager {
                     } else if (smallIdToName.containsKey(sid)) {
                         matchInfo = String.format(" idMatch=sid%d->%s", sid, smallIdToName.get(sid));
                     } else {
-                        // Dump raw ID fields for unmatched entities to help debug
+                        
                         StringBuilder ids = new StringBuilder(" rawIds=[");
                         for (int off : new int[]{0x04, 0x08, 0x0C, 0x10, 0x14, 0x24, 0xB4, 0xB8, 0x190}) {
                             int v = memory.readInt(ep + off);
@@ -197,7 +247,12 @@ public class EntityManager {
         }
         logInfo(String.format("[SCAN] NPC array types: %s (total=%d, near<30m=%d)", typeCounts, cnt, nearCount));
 
-        logInfo("[SCAN] --- Buscando resource chain (lista de recursos separada) ---");
+        
+        logInfo("[SCAN] --- Buscando MatterMan (CECMatterMan via source PW 1.5.5) ---");
+        diagMatterMan(step1, player);
+
+        
+        logInfo("[SCAN] --- Buscando resource chain (legacy, para comparacao) ---");
         boolean foundRes = false;
         resChains.clear();
 
@@ -221,7 +276,7 @@ public class EntityManager {
 
         probeNpcNames(arr, cnt, player);
 
-        // Show nearby known resource spawns from coordinate database
+        
         if (resourceDb != null && resourceDb.getSpawnCount() > 0) {
             List<ResourceSpawn> nearSpawns = resourceDb.findNearby(
                     player.getX(), player.getY(), player.getZ(), 150.0f);
@@ -308,11 +363,7 @@ public class EntityManager {
         return found;
     }
 
-    /**
-     * Hex dump of resource entity fields to find the template ID offset.
-     * Dumps int values at every 4 bytes from 0x00 to 0x200 for up to 4 entities,
-     * then highlights offsets where values DIFFER between entities (potential type discriminators).
-     */
+    
     private void hexDumpResourceEntities(long step1, Player player) {
         if (resChains.isEmpty()) return;
         int[] ch = resChains.get(0);
@@ -324,8 +375,8 @@ public class EntityManager {
 
         logInfo("[SCAN] --- Hex dump of resource entities (finding template ID offset) ---");
 
-        // Collect entities sorted by distance
-        List<long[]> entities = new ArrayList<>(); // {ep, dist*100}
+        
+        List<long[]> entities = new ArrayList<>(); 
         for (int i = 0; i < Math.min(cnt, 30); i++) {
             long ep = readPtr(arr + (long) i * 4);
             if (ep < MIN_PTR) continue;
@@ -344,7 +395,7 @@ public class EntityManager {
             return;
         }
 
-        // Read all int values 0x00-0x200 for each entity
+        
         int maxOff = 0x200;
         int slots = maxOff / 4;
         int[][] values = new int[dumpCount][slots];
@@ -357,13 +408,13 @@ public class EntityManager {
             }
         }
 
-        // Dump a concise comparison: only offsets where values differ between entities
-        // (excluding known positional fields at 0x3C-0x44)
+        
+        
         StringBuilder diffLog = new StringBuilder("[HEXDIFF] Offsets where entities differ:\n");
         int diffCount = 0;
         for (int s = 0; s < slots; s++) {
             int off = s * 4;
-            if (off >= 0x3C && off <= 0x44) continue; // skip position
+            if (off >= 0x3C && off <= 0x44) continue; 
             boolean allSame = true;
             for (int e = 1; e < dumpCount; e++) {
                 if (values[e][s] != values[0][s]) {
@@ -376,7 +427,7 @@ public class EntityManager {
                 StringBuilder line = new StringBuilder(String.format("  +0x%03X:", off));
                 for (int e = 0; e < dumpCount; e++) {
                     int v = values[e][s];
-                    // Show as int and hex, and as float if it looks like a reasonable float
+                    
                     float f = Float.intBitsToFloat(v);
                     if (!Float.isNaN(f) && !Float.isInfinite(f) && Math.abs(f) > 0.001f && Math.abs(f) < 100000f) {
                         line.append(String.format(" [e%d=%d(0x%X)(%.2f)]", e, v, v, f));
@@ -388,11 +439,11 @@ public class EntityManager {
             }
         }
 
-        // Header showing which entities we're comparing
+        
         for (int e = 0; e < dumpCount; e++) {
             float d = entities.get(e)[1] / 100.0f;
             logInfo(String.format("[HEXDUMP] e%d: ep=0x%X dist=%.1f sid=%d",
-                    e, eps[e], d, values[e][1])); // slot 1 = offset +0x04 = smallId
+                    e, eps[e], d, values[e][1])); 
         }
         logInfo(String.format("[HEXDIFF] %d offsets differ out of %d (0x00-0x%X, excl pos)",
                 diffCount, slots, maxOff));
@@ -574,6 +625,8 @@ public class EntityManager {
             float dist = dist3D(x, y, z, player);
 
             if (type == GameConstants.TYPE_MOB) {
+                
+                
                 if (dist > MOB_MAX_DIST || dist < 0.5f) continue;
                 int uid = (int) (ep & 0x7FFFFFFFL);
                 mobIds.add(uid);
@@ -581,9 +634,9 @@ public class EntityManager {
                 continue;
             }
 
-            if (dist > MAT_MAX_DIST) {
-                if (tickCount % 50 == 0) {
-                    logInfo(String.format("[MAT-SKIP] type=%d ep=0x%X dist=%.1f (out of range)", type, ep, dist));
+            if (dist > MAT_MAX_DIST || dist < MIN_MAT_DIST) {
+                if (tickCount % 50 == 0 && dist < MIN_MAT_DIST) {
+                    logInfo(String.format("[MAT-SKIP] type=%d ep=0x%X dist=%.1f (too close, ghost)", type, ep, dist));
                 }
                 continue;
             }
@@ -599,14 +652,352 @@ public class EntityManager {
         }
     }
 
-    private void scanResourceArray(long moduleBase, Player player, Set<Integer> matIds) {
+    
+    private void diagMatterMan(long step1, Player player) {
+        
+        
+        
+        
+        
+        int[] matterManOffsets = {0x28, 0x20, 0x2C, 0x30, 0x34};
+
+        
+        long bestMm = 0;
+        int bestHtBase = 0;
+        int bestMmOff = 0;
+        int bestCount = 0;
+        int bestMineTypeCount = 0;  
+        int bestValidTidCount = 0;  
+        long bestBucketData = 0;
+        int bestBucketCount = 0;
+
+        for (int mmOff : matterManOffsets) {
+            long mm = readPtr(step1 + mmOff);
+            if (mm < MIN_PTR || mm > 0xFFFFFFF0L) continue;
+
+            logInfo(String.format("[MATTER] Probing MatterMan candidate at step1+0x%X = 0x%X", mmOff, mm));
+
+            
+            StringBuilder dump = new StringBuilder("[MATTER] MatterMan dump: ");
+            for (int off = 0; off < 0x60; off += 4) {
+                long v = readPtr(mm + off);
+                dump.append(String.format("+0x%02X=%d(0x%X) ", off, (int) v, v));
+            }
+            logInfo(dump.toString());
+
+            
+            
+            for (int htBase = 0x08; htBase <= 0x50; htBase += 4) {
+                int count = memory.readInt(mm + htBase + 0x04);
+                if (count <= 0 || count > 500) continue;
+
+                long bucketData = readPtr(mm + htBase + 0x0C);
+                if (bucketData < MIN_PTR) continue;
+
+                int bucketCount = memory.readInt(mm + htBase + 0x18);
+                if (bucketCount < count || bucketCount > 10000) continue;
+
+                logInfo(String.format("[MATTER] Potential hashtab at MatterMan+0x%X: count=%d bucketData=0x%X bucketCount=%d",
+                        htBase, count, bucketData, bucketCount));
+
+                
+                int validNodes = 0;
+                int mineTypeCount = 0;  
+                int validTidCount = 0;  
+
+                for (int b = 0; b < bucketCount; b++) {
+                    long nodePtr = readPtr(bucketData + (long) b * 4);
+                    if (nodePtr < MIN_PTR) continue;
+
+                    long node = nodePtr;
+                    int chainLen = 0;
+                    while (node >= MIN_PTR && chainLen < 20) {
+                        chainLen++;
+
+                        long matterPtr = readPtr(node + 0x04);  
+                        int matterKey = memory.readInt(node + 0x08);
+
+                        if (matterPtr >= MIN_PTR && matterPtr < 0xFFFFFFF0L) {
+                            float x = memory.readFloat(matterPtr + 0x3C);
+                            float y = memory.readFloat(matterPtr + 0x40);
+                            float z = memory.readFloat(matterPtr + 0x44);
+
+                            if (isValidPos(x, y, z)) {
+                                validNodes++;
+                                
+                                int mType = memory.readInt(matterPtr + 0x150);
+                                if ((mType & 0xFF) == MATTER_MINE) mineTypeCount++;
+                                
+                                int tid = memory.readInt(matterPtr + 0x114);
+                                if (tid >= 2800 && tid <= 4000 && ResourceDatabase.getNameById(tid) != null) validTidCount++;
+
+                                if (validNodes <= 8) {
+                                    int mid = memory.readInt(matterPtr + 0x110);
+                                    String dbName = "";
+                                    if (resourceDb != null) {
+                                        ResourceSpawn sp = resourceDb.matchToSpawn(x, y, z);
+                                        if (sp != null) dbName = " dbMatch=" + sp.getName();
+                                    }
+                                    logInfo(String.format("[MATTER]   CECMatter=0x%X key=%d pos=(%.1f,%.1f,%.1f) d=%.1f mid=%d tid=%d mType=%d(0x%08X)%s",
+                                            matterPtr, matterKey, x, y, z, dist3D(x,y,z,player), mid, tid, mType & 0xFF, mType, dbName));
+                                }
+                            }
+                        }
+
+                        node = readPtr(node);  
+                    }
+                }
+
+                logInfo(String.format("[MATTER] Hashtab score: validNodes=%d mineType=%d validTid=%d (step1+0x%X ht+0x%X)",
+                        validNodes, mineTypeCount, validTidCount, mmOff, htBase));
+
+                
+                int score = mineTypeCount * 1000 + validTidCount;
+                int bestScore = bestMineTypeCount * 1000 + bestValidTidCount;
+                if (score > bestScore) {
+                    bestMm = mm;
+                    bestHtBase = htBase;
+                    bestMmOff = mmOff;
+                    bestCount = count;
+                    bestMineTypeCount = mineTypeCount;
+                    bestValidTidCount = validTidCount;
+                    bestBucketData = bucketData;
+                    bestBucketCount = bucketCount;
+                }
+            }
+        }
+
+        
+        if (bestMm != 0 && bestMineTypeCount > 0) {
+            logInfo(String.format("[MATTER] *** CONFIRMED hashtab at MatterMan+0x%X (step1+0x%X) count=%d mineType=%d validTid=%d ***",
+                    bestHtBase, bestMmOff, bestCount, bestMineTypeCount, bestValidTidCount));
+            matterManPtr = bestMm;
+            htCountOff = bestHtBase + 0x04;
+            htBucketDataOff = bestHtBase + 0x0C;
+            htBucketCountOff = bestHtBase + 0x18;
+            
+            
+            logInfo(String.format("[MATTER] Using tid=+0x%X type=+0x%X mid=+0x%X (pre-confirmed offsets)",
+                    matterTidOff, matterTypeOff, matterMidOff));
+        } else {
+            logInfo("[MATTER] WARN: MatterMan hashtable not confirmado (mineTypeCount=0). Usando legacy scan.");
+        }
+    }
+
+    
+    private void probeMatterOffsets(long mm, long bucketData, int bucketCount, Player player) {
+        
+        List<long[]> matters = new ArrayList<>(); 
+        for (int b = 0; b < bucketCount && matters.size() < 30; b++) {
+            long node = readPtr(bucketData + (long) b * 4);
+            while (node >= MIN_PTR && matters.size() < 30) {
+                long matterPtr = readPtr(node + 0x04);
+                int key = memory.readInt(node + 0x08);
+                if (matterPtr >= MIN_PTR) {
+                    float x = memory.readFloat(matterPtr + 0x3C);
+                    float y = memory.readFloat(matterPtr + 0x40);
+                    float z = memory.readFloat(matterPtr + 0x44);
+                    if (isValidPos(x, y, z)) {
+                        matters.add(new long[]{matterPtr, key});
+                    }
+                }
+                node = readPtr(node);
+            }
+        }
+
+        if (matters.isEmpty()) return;
+
+        
+        int[] tidCandidates = {0x110, 0x114, 0x118, 0x10C, 0x108, 0x120, 0x124, 0x128, 0x104, 0x100};
+        int bestTidOff = -1;
+        int bestTidMatches = 0;
+        for (int tidOff : tidCandidates) {
+            int matches = 0;
+            for (long[] m : matters) {
+                int v = memory.readInt(m[0] + tidOff);
+                if (v >= 2800 && v <= 4000 && ResourceDatabase.getNameById(v) != null) {
+                    matches++;
+                }
+            }
+            if (matches > bestTidMatches) {
+                bestTidMatches = matches;
+                bestTidOff = tidOff;
+            }
+        }
+
+        
+        int[] midCandidates = {0x110, 0x10C, 0x108, 0x114, 0x104, 0x100};
+        
+        int bestMidOff = -1;
+        int bestMidMatches = 0;
+        for (int midOff : midCandidates) {
+            if (midOff == bestTidOff) continue; 
+            int matches = 0;
+            for (long[] m : matters) {
+                int v = memory.readInt(m[0] + midOff);
+                if (v == (int) m[1]) { 
+                    matches++;
+                }
+            }
+            if (matches > bestMidMatches) {
+                bestMidMatches = matches;
+                bestMidOff = midOff;
+            }
+        }
+
+        
+        int[] typeCandidates = {0x150, 0x14C, 0x148, 0x154, 0x158, 0x15C, 0x144, 0x140};
+        int bestTypeOff = -1;
+        int bestTypeMatches = 0;
+        for (int typeOff : typeCandidates) {
+            int countMine = 0;
+            int countItem = 0;
+            int countMoney = 0;
+            for (long[] m : matters) {
+                int v = memory.readInt(m[0] + typeOff) & 0xFF;
+                if (v == 1) countItem++;
+                else if (v == 2) countMine++;
+                else if (v == 3) countMoney++;
+            }
+            
+            int total = countMine + countItem + countMoney;
+            if (total > bestTypeMatches) {
+                bestTypeMatches = total;
+                bestTypeOff = typeOff;
+            }
+        }
+
+        if (bestTidOff >= 0) {
+            matterTidOff = bestTidOff;
+            logInfo(String.format("[MATTER] Template ID offset: +0x%X (%d/%d matches)", bestTidOff, bestTidMatches, matters.size()));
+        } else {
+            logInfo("[MATTER] WARN: no template ID offset found");
+        }
+        if (bestMidOff >= 0) {
+            matterMidOff = bestMidOff;
+            logInfo(String.format("[MATTER] Matter ID offset: +0x%X (%d/%d matches)", bestMidOff, bestMidMatches, matters.size()));
+        }
+        if (bestTypeOff >= 0) {
+            matterTypeOff = bestTypeOff;
+            logInfo(String.format("[MATTER] Matter type offset: +0x%X (%d/%d matches)", bestTypeOff, bestTypeMatches, matters.size()));
+        }
+    }
+
+    
+    private void scanMatterHashtable(long moduleBase, Player player, Set<Integer> matIds) {
+        if (matterManPtr == 0) {
+            
+            scanResourceArrayLegacy(moduleBase, player, matIds);
+            return;
+        }
+
+        
+        long rootVal = readPtr(moduleBase + GameConstants.BASE_OFFSET);
+        if (rootVal < MIN_PTR) return;
+        long step1 = readPtr(rootVal + 0x18);
+        if (step1 < MIN_PTR) return;
+        
+        
+        
+        long mm = matterManPtr;
+        
+        int count = memory.readInt(mm + htCountOff);
+        if (count <= 0 || count > 5000) {
+            
+            return;
+        }
+
+        long bucketData = readPtr(mm + htBucketDataOff);
+        int bucketCount = memory.readInt(mm + htBucketCountOff);
+        if (bucketData < MIN_PTR || bucketCount <= 0 || bucketCount > 50000) return;
+
+        if (tickCount <= 3) {
+            logInfo(String.format("[MATTER] Scanning hashtab: count=%d buckets=%d", count, bucketCount));
+        }
+
+        int found = 0;
+        for (int b = 0; b < bucketCount; b++) {
+            long node = readPtr(bucketData + (long) b * 4);
+            int chainLen = 0;
+
+            while (node >= MIN_PTR && chainLen < 50) {
+                chainLen++;
+                long matterPtr = readPtr(node + 0x04);  
+                int matterKey = memory.readInt(node + 0x08);  
+
+                if (matterPtr >= MIN_PTR && matterPtr < 0xFFFFFFF0L) {
+                    float x = memory.readFloat(matterPtr + 0x3C);
+                    float y = memory.readFloat(matterPtr + 0x40);
+                    float z = memory.readFloat(matterPtr + 0x44);
+
+                    if (isValidPos(x, y, z)) {
+                        float dist = dist3D(x, y, z, player);
+                        if (dist <= MAT_MAX_DIST && dist >= MIN_MAT_DIST) {
+                            int uid = (int) (matterPtr & 0x7FFFFFFFL);
+
+                            if (!matIds.contains(uid)) {
+                                matIds.add(uid);
+                                resChainUids.add(uid);
+
+                                Entity ent = getOrCreate(materialCache, uid, GameConstants.TYPE_MATERIAL);
+                                ent.setBaseAddress(matterPtr);
+                                ent.setX(x); ent.setY(y); ent.setZ(z);
+                                ent.setType(GameConstants.TYPE_MATERIAL);
+                                ent.calculateDistance(player);
+                                ent.setId(matterKey);
+
+                                
+                                if (matterTidOff >= 0) {
+                                    int tid = memory.readInt(matterPtr + matterTidOff);
+                                    if (tid >= 2800 && tid <= 4000) {
+                                        ent.setTemplateId(tid);
+                                        String name = ResourceDatabase.getNameById(tid);
+                                        if (name != null) {
+                                            ent.setName(name);
+                                            ent.setDbMatched(true);
+                                        }
+                                    }
+                                }
+
+                                
+                                if (!ent.isDbMatched() && resourceDb != null) {
+                                    String smartName = resourceDb.smartIdentify(x, y, z);
+                                    if (smartName != null) {
+                                        ent.setName(smartName);
+                                        ent.setDbMatched(true);
+                                    } else if (ent.getName() == null) {
+                                        ent.setName("Recurso");
+                                    }
+                                }
+
+                                found++;
+                                if (tickCount % 50 == 0) {
+                                    String name = ent.getName() != null ? ent.getName() : "?";
+                                    logInfo(String.format("[MATTER-OK] name=%s mid=%d tid=%d ep=0x%X dist=%.1f pos=(%.1f,%.1f,%.1f)",
+                                            name, matterKey, ent.getTemplateId(), matterPtr, dist, x, y, z));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                node = readPtr(node);  
+            }
+        }
+
+        if (tickCount % 50 == 0 && found > 0) {
+            logInfo(String.format("[MATTER] Tick %d: found %d matters within %.0fm", tickCount, found, MAT_MAX_DIST));
+        }
+    }
+
+    private void scanResourceArrayLegacy(long moduleBase, Player player, Set<Integer> matIds) {
         if (resChains.isEmpty()) return;
         long rootVal = readPtr(moduleBase + GameConstants.BASE_OFFSET);
         if (rootVal < MIN_PTR) return;
         long step1 = readPtr(rootVal + 0x18);
         if (step1 < MIN_PTR) return;
 
-        // Track which array pointers we've already scanned to avoid duplicate chains
+        
         Set<Long> scannedArrays = new HashSet<>();
 
         for (int[] ch : resChains) {
@@ -616,7 +1007,7 @@ public class EntityManager {
             int cnt = memory.readInt(resMgr + ch[2]);
             if (arr < MIN_PTR || cnt <= 0 || cnt > 800) continue;
 
-            // Skip if we already scanned this exact array pointer
+            
             if (!scannedArrays.add(arr)) continue;
 
             if (tickCount <= 2) {
@@ -631,13 +1022,14 @@ public class EntityManager {
                 float z = memory.readFloat(ep + 0x44);
                 if (!isValidPos(x, y, z)) continue;
                 float dist = dist3D(x, y, z, player);
-                if (dist > MAT_MAX_DIST) continue;
+                if (dist > MAT_MAX_DIST || dist < MIN_MAT_DIST) continue;
 
                 int uid = (int) (ep & 0x7FFFFFFFL);
                 if (!matIds.contains(uid)) {
                     matIds.add(uid);
-                    // Resource chain entities use TYPE_MATERIAL — offset 0xB4 is not
-                    // a valid type field for resource structs
+                    resChainUids.add(uid);  
+                    
+                    
                     Entity ent = getOrCreate(materialCache, uid, GameConstants.TYPE_MATERIAL);
                     fill(ent, ep, x, y, z, GameConstants.TYPE_MATERIAL, player);
                     if (tickCount % 50 == 0) {
@@ -670,32 +1062,36 @@ public class EntityManager {
         ent.setType(type);
         ent.calculateDistance(player);
 
-        // Read the world smallId from entity struct offset +0x04
+        
         int smallId = memory.readInt(ep + 0x04);
 
-        // Identify material by position matching against known spawn database
+        
         if (type != GameConstants.TYPE_MOB && resourceDb != null) {
-            // Use smart identification: returns category name when multiple types
-            // share the same spawn point (e.g., "Erva Lv1" instead of always "Nectar")
+            
+            
             String smartName = resourceDb.smartIdentify(x, y, z);
             if (smartName != null) {
                 ent.setName(smartName);
+                ent.setDbMatched(true);  
                 ResourceSpawn sp = resourceDb.matchToSpawn(x, y, z);
                 if (sp != null) {
                     ent.setTemplateId(sp.getTemplateId());
-                    // Learn this smallId → category mapping for propagation
+                    
                     if (smallId > 0 && smallId < 0x10000) {
                         smallIdToName.put(smallId, smartName);
                         smallIdToTemplateId.put(smallId, sp.getTemplateId());
                     }
                 }
-            } else {
-                // Try to read template ID from entity memory for ID-based lookup
+            } else if (!ent.isDbMatched()) {
+                
+                
+                
                 String nameById = tryReadTemplateId(ent, ep, type);
                 if (nameById != null) {
                     ent.setName(nameById);
+                    ent.setDbMatched(true);  
                 }
-                // Fallback: check smallId → name mapping learned from other entities
+                
                 else if (smallId > 0 && smallId < 0x10000 && smallIdToName.containsKey(smallId)) {
                     ent.setName(smallIdToName.get(smallId));
                     if (smallIdToTemplateId.containsKey(smallId)) {
@@ -709,12 +1105,9 @@ public class EntityManager {
         }
     }
 
-    /**
-     * Try to read a template ID from the entity structure and match it
-     * against the resource database. Probes several known offsets.
-     */
+    
     private String tryReadTemplateId(Entity ent, long ep, int type) {
-        // Offsets that commonly hold template/type IDs in PW entity structs
+        
         int[] probeOffsets = { 0x04, 0x08, 0x0C, 0x10, 0x14, 0x24, 0xB8, 0xBC };
         for (int off : probeOffsets) {
             int val = memory.readInt(ep + off);
@@ -726,7 +1119,7 @@ public class EntityManager {
                 }
             }
         }
-        // For NPC type=7: also try via [ep] → vtable-like indirection
+        
         if (type == GameConstants.TYPE_MATERIAL) {
             long vt = readPtr(ep);
             if (vt >= MIN_PTR && vt < 0x7FFFFFFFL) {
@@ -754,7 +1147,16 @@ public class EntityManager {
         for (Map.Entry<Integer, Entity> entry : materialCache.entrySet()) {
             Integer sc = stableCount.get(entry.getKey());
             if (sc != null && sc >= MIN_STABLE) {
-                list.add(entry.getValue());
+                Entity e = entry.getValue();
+                
+                if (!e.isDbMatched()) {
+                    if (tickCount % 200 == 0) {
+                        logInfo(String.format("[GHOST-SKIP] %s ep=0x%X dist=%.1f (no DB match, skipping)",
+                                e.getName(), e.getBaseAddress(), e.getDistance()));
+                    }
+                    continue;
+                }
+                list.add(e);
             }
         }
         list.sort(Comparator.comparingDouble(Entity::getDistance));
@@ -772,6 +1174,7 @@ public class EntityManager {
             Integer sc = stableCount.get(entry.getKey());
             if (sc != null && sc >= MIN_STABLE) {
                 Entity e = entry.getValue();
+                if (!e.isDbMatched()) continue;  
                 if (best == null || e.getDistance() < best.getDistance()) {
                     best = e;
                 }

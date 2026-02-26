@@ -2,35 +2,34 @@ package com.bot.logic.states;
 
 import com.bot.logic.BotContext;
 import com.bot.constants.GameConstants;
+import com.bot.constants.BotSettings;
 import com.bot.memory.PacketSender;
 import com.bot.model.Entity;
 
-/**
- * State that handles gathering a targeted material/herb.
- * 
- * Flow:
- * 1. Select the target via packet (opcode 0x02)
- * 2. Open NPC dialogue to start gathering (opcode 0x23)
- * 3. Wait for gathering to complete
- * 4. Return to PatrolState or IdleState
- *
- * Falls back to keyboard interaction if PacketSender is not available.
- */
+
 public class CollectionState implements BotState {
 
     private final Entity target;
-    private int phase = 0;  // 0=select, 1=interact, 2=wait
+    private int phase = 0;  
     private long phaseStartTime;
-    private static final long GATHER_TIMEOUT_MS = 12000; // max gather time
-    private static final long SELECT_DELAY_MS   = 500;
-    private static final long INTERACT_DELAY_MS = 800;
+    private int readTargetId = 0;
+    private final float originalX, originalY, originalZ;
+
+    private static final long GATHER_TIMEOUT_MS  = 15000; 
+    private static final long SELECT_DELAY_MS    = 500;   
+    private static final long MIN_GATHER_TIME_MS = 3000;  
+    private static final long ENTITY_CHECK_MS    = 1000;  
 
     public CollectionState() {
         this.target = null;
+        this.originalX = 0; this.originalY = 0; this.originalZ = 0;
     }
 
     public CollectionState(Entity target) {
         this.target = target;
+        this.originalX = target != null ? target.getX() : 0;
+        this.originalY = target != null ? target.getY() : 0;
+        this.originalZ = target != null ? target.getZ() : 0;
     }
 
     @Override
@@ -54,44 +53,87 @@ public class CollectionState implements BotState {
         long now = System.currentTimeMillis();
 
         switch (phase) {
-            case 0: // Select target
-                int targetId = ctx.getMemory().readInt(target.getBaseAddress() + GameConstants.OFFSET_ID);
-                if (targetId != 0) {
-                    boolean ok = pkt.selectTarget(targetId);
-                    log(String.format("[COLLECT] Select target id=%d addr=0x%X dist=%.1fm %s",
-                            targetId, target.getBaseAddress(), target.getDistance(),
+            case 0: 
+                readTargetId = ctx.getMemory().readInt(target.getBaseAddress() + GameConstants.OFFSET_ID);
+                if (readTargetId != 0) {
+                    boolean ok = pkt.selectTarget(readTargetId);
+                    String name = target.getName() != null ? target.getName() : "?";
+                    
+                    
+                    
+                    boolean isMatterId = (readTargetId & 0xC0000000) == 0xC0000000;
+                    boolean isNpcId = (readTargetId & 0x80000000) != 0 && (readTargetId & 0x40000000) == 0;
+                    log(String.format("[COLLECT] Select %s id=%d (0x%X) %s dist=%.1fm %s",
+                            name, readTargetId, readTargetId,
+                            isMatterId ? "MATTER" : isNpcId ? "NPC" : "PLAYER",
+                            target.getDistance(),
                             ok ? "OK" : "FALHOU"));
                 } else {
-                    log("[COLLECT] WARN: targetId=0, tentando com baseAddress como uid");
-                    pkt.selectTarget((int)(target.getBaseAddress() & 0x7FFFFFFFL));
+                    log(String.format("[COLLECT] WARN: targetId=0 para addr=0x%X, abortando",
+                            target.getBaseAddress()));
+                    ctx.blacklist(target.getBaseAddress());
+                    ctx.setState(new IdleState());
+                    return;
                 }
                 phase = 1;
                 phaseStartTime = now;
                 break;
 
-            case 1: // Start interaction (after select delay)
+            case 1: 
                 if (now - phaseStartTime < SELECT_DELAY_MS) return;
-                int npcId = ctx.getMemory().readInt(target.getBaseAddress() + GameConstants.OFFSET_ID);
-                if (npcId != 0) {
-                    boolean ok = pkt.startNpcDialogue(npcId);
+                if (readTargetId != 0) {
+                    boolean ok;
+                    boolean isMatterId = (readTargetId & 0xC0000000) == 0xC0000000;
                     String name = target.getName() != null ? target.getName() : "?";
-                    log(String.format("[COLLECT] Interagindo com %s (id=%d) %s", name, npcId, ok ? "OK" : "FALHOU"));
+
+                    if (isMatterId) {
+                        
+                        
+                        ok = pkt.gatherMaterial(readTargetId);
+                        log(String.format("[COLLECT] GatherMaterial %s (mid=%d) %s",
+                                name, readTargetId, ok ? "OK" : "FALHOU"));
+                    } else {
+                        
+                        
+                        ok = pkt.gatherMaterial(readTargetId);
+                        log(String.format("[COLLECT] GatherMaterial (NPC id) %s (nid=%d) %s",
+                                name, readTargetId, ok ? "OK" : "FALHOU"));
+                        if (!ok) {
+                            
+                            ok = pkt.startNpcDialogue(readTargetId);
+                            log(String.format("[COLLECT] Fallback NpcDialogue %s (nid=%d) %s",
+                                    name, readTargetId, ok ? "OK" : "FALHOU"));
+                        }
+                    }
+                    if (!ok) {
+                        log("[COLLECT] Falha na interacao, blacklistando");
+                        ctx.blacklist(target.getBaseAddress());
+                        ctx.setState(new IdleState());
+                        return;
+                    }
                 }
                 phase = 2;
                 phaseStartTime = now;
                 break;
 
-            case 2: // Wait for gathering to complete
-                if (now - phaseStartTime > GATHER_TIMEOUT_MS) {
-                    log("[COLLECT] Timeout de coleta, voltando");
+            case 2: 
+                long elapsed = now - phaseStartTime;
+
+                
+                if (elapsed > GATHER_TIMEOUT_MS) {
+                    log("[COLLECT] Timeout de coleta, blacklistando alvo");
+                    ctx.blacklist(target.getBaseAddress());
                     ctx.setState(new IdleState());
                     return;
                 }
-                // Check if gather is still active by reading player action state
-                // For now, use simple timer
-                if (now - phaseStartTime > 6000) {
-                    log("[COLLECT] Coleta concluida (estimativa)");
-                    ctx.setState(new IdleState());
+
+                
+                if (elapsed > MIN_GATHER_TIME_MS) {
+                    if (isEntityGone(ctx)) {
+                        log("[COLLECT] Coleta concluida! Entidade desapareceu da memoria");
+                        ctx.setState(new IdleState());
+                        return;
+                    }
                 }
                 break;
 
@@ -101,9 +143,33 @@ public class CollectionState implements BotState {
         }
     }
 
-    /** Fallback: use keyboard 'F' key for interaction */
+    
+    private boolean isEntityGone(BotContext ctx) {
+        try {
+            long addr = target.getBaseAddress();
+            float x = ctx.getMemory().readFloat(addr + 0x3C);
+            float y = ctx.getMemory().readFloat(addr + 0x40);
+            float z = ctx.getMemory().readFloat(addr + 0x44);
+
+            
+            if (Float.isNaN(x) || Float.isNaN(y) || Float.isNaN(z)) return true;
+            if (x == 0f && y == 0f && z == 0f) return true;
+
+            
+            float dx = x - originalX;
+            float dy = y - originalY;
+            float dz = z - originalZ;
+            float moved = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (moved > 10.0f) return true;
+
+            return false;
+        } catch (Exception e) {
+            return true; 
+        }
+    }
+
+    
     private void executeFallback(BotContext ctx) {
-        // Press F key (0x46) to interact with nearest target
         ctx.getInput().sendKey(GameConstants.WINDOW_NAME, 0x46, 200);
         try { Thread.sleep(3000); } catch (Exception ignored) {}
         ctx.setState(new IdleState());
@@ -111,6 +177,6 @@ public class CollectionState implements BotState {
 
     private void log(String msg) {
         System.out.println(msg);
-        com.bot.constants.BotSettings.logToUi(msg);
+        BotSettings.logToUi(msg);
     }
 }

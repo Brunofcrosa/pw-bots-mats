@@ -6,6 +6,7 @@ public class Entity {
     private int templateId;
     private String name;
     private float x, y, z, distance;
+    private boolean dbMatched;
 
     public Entity() {}
 
@@ -40,4 +41,6 @@ public class Entity {
     public void setTemplateId(int templateId) { this.templateId = templateId; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+    public boolean isDbMatched() { return dbMatched; }
+    public void setDbMatched(boolean dbMatched) { this.dbMatched = dbMatched; }
 }

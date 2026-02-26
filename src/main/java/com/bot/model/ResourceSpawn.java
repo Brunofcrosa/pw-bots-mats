@@ -1,8 +1,6 @@
 package com.bot.model;
 
-/**
- * Represents a known resource spawn point from the world coordinates database.
- */
+
 public class ResourceSpawn {
     private final int templateId;
     private final String name;

@@ -56,7 +56,7 @@ public class Main {
 
         long dynamicBasePointer = moduleBase + GameConstants.BASE_OFFSET;
 
-        // Load resource spawn database from coords file
+        
         ResourceDatabase resourceDb = new ResourceDatabase();
         String coordsPath = System.getProperty("user.dir") + "\\coordenadas\\coords world.txt";
         java.io.File coordsFile = new java.io.File(coordsPath);
@@ -68,7 +68,7 @@ public class Main {
 
         EntityManager entityManager = new EntityManager(memory, dynamicBasePointer, resourceDb);
 
-        // Initialize packet sender for game interaction
+        
         PacketSender packetSender = new PacketSender(memory);
         boolean pktReady = packetSender.initialize(moduleBase);
         if (pktReady) {
@@ -77,16 +77,17 @@ public class Main {
             gui.log("[WARN] PacketSender nao inicializado. Interacao por pacotes desativada.");
         }
 
-        List<Vector3> route = Arrays.asList(
-                new Vector3(100.0f, 50.0f, 200.0f),
-                new Vector3(120.0f, 50.0f, 210.0f),
-                new Vector3(150.0f, 60.0f, 250.0f)
-        );
+        
+        List<Vector3> route = Arrays.asList();
         WaypointManager waypointManager = new WaypointManager(route);
         BotContext bot = new BotContext(memory, input, player, entityManager, moduleBase, waypointManager, packetSender);
 
+        
+        gui.setOnBotToggle(running -> bot.setRunning(running));
+
         gui.log("[INFO] Bot acoplado com sucesso.");
-        gui.log("[INFO] Deteccao automatica de materiais ativa. Snapshot manual nao e necessario.");
+        gui.log("[INFO] Deteccao automatica de materiais ativa.");
+        gui.log("[INFO] Clique START para iniciar coleta automatica.");
 
         new Thread(() -> {
             while (true) {
@@ -97,8 +98,14 @@ public class Main {
 
                     final Entity nearestMob = entityManager.getNearestMob();
                     final List<Entity> materials = entityManager.getMaterials();
+                    final String stateName = bot.getStateName();
 
-                    SwingUtilities.invokeLater(() -> gui.updateUI(player, nearestMob, materials));
+                    SwingUtilities.invokeLater(() -> {
+                        gui.updateUI(player, nearestMob, materials);
+                        if (bot.isRunning()) {
+                            gui.updateBotStatus(stateName, materials.size());
+                        }
+                    });
                     Thread.sleep(100);
                 } catch (Exception e) {
                     System.err.println("Erro no loop principal: " + e.getMessage());
