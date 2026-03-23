@@ -1,6 +1,7 @@
 package com.bot.logic.states;
 
 import com.bot.logic.BotContext;
+import com.bot.logic.RouteManager;
 import com.bot.model.Entity;
 import com.bot.constants.BotSettings;
 
@@ -35,6 +36,13 @@ public class IdleState implements BotState {
         }
 
         
+        RouteManager rm = ctx.getRouteManager();
+        if (rm != null && rm.isRouteActive()) {
+            log("[IDLE] Modo rota ativo, iniciando SpawnRouteState");
+            ctx.setState(new SpawnRouteState());
+            return;
+        }
+
         if (ctx.getWaypointManager() != null && ctx.getWaypointManager().getCurrentTarget() != null) {
             log("[IDLE] Nenhum material proximo, iniciando patrulha");
             ctx.setState(new PatrolState());

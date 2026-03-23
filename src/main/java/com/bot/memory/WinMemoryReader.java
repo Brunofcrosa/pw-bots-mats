@@ -16,6 +16,7 @@ import com.sun.jna.ptr.IntByReference;
 public class WinMemoryReader {
     private HANDLE processHandle;
     private int pid;
+    private HWND gameHwnd;
     private final java.util.Set<Long> bulkReadWarned = new java.util.HashSet<>();
 
     public WinMemoryReader() {}
@@ -31,12 +32,16 @@ public class WinMemoryReader {
         IntByReference pidRef = new IntByReference();
         User32.INSTANCE.GetWindowThreadProcessId(hwnd, pidRef);
         this.pid = pidRef.getValue();
+        this.gameHwnd = hwnd;
 
         this.processHandle = Kernel32.INSTANCE.OpenProcess(
                 WinNT.PROCESS_ALL_ACCESS,
                 false, pid);
         return this.processHandle != null;
     }
+
+    
+    public HWND getGameHwnd() { return gameHwnd; }
 
     public long getModuleBaseAddress(String moduleName) {
         WinDef.DWORD dwFlags = new WinDef.DWORD(Tlhelp32.TH32CS_SNAPMODULE.longValue() | Tlhelp32.TH32CS_SNAPMODULE32.longValue());

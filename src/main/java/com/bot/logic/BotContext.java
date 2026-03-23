@@ -2,6 +2,7 @@ package com.bot.logic;
 
 import com.bot.logic.states.BotState;
 import com.bot.logic.states.IdleState;
+import com.bot.logic.states.SpawnRouteState;
 import com.bot.memory.WinMemoryReader;
 import com.bot.memory.PacketSender;
 import com.bot.model.Entity;
@@ -24,10 +25,10 @@ public class BotContext {
 
     private Entity targetEntity;
     private boolean running = false;
+    private RouteManager routeManager;
 
-    
     private final Map<Long, Long> blacklist = new HashMap<>();
-    private static final long BLACKLIST_DURATION_MS = 30000; 
+    private static final long BLACKLIST_DURATION_MS = 30000;
 
     public BotContext(WinMemoryReader memory, InputSimulator input, Player player, EntityManager entityManager, long moduleBase, WaypointManager waypointManager, PacketSender packetSender) {
         this.memory = memory; this.input = input; this.player = player;
@@ -55,6 +56,11 @@ public class BotContext {
         blacklist.put(baseAddress, System.currentTimeMillis() + BLACKLIST_DURATION_MS);
     }
 
+    
+    public void blacklist(long baseAddress, long durationMs) {
+        blacklist.put(baseAddress, System.currentTimeMillis() + durationMs);
+    }
+
     public boolean isBlacklisted(long baseAddress) {
         Long expiry = blacklist.get(baseAddress);
         if (expiry == null) return false;
@@ -70,7 +76,11 @@ public class BotContext {
     public void setRunning(boolean running) {
         this.running = running;
         if (running) {
-            setState(new IdleState());
+            if (routeManager != null && routeManager.isRouteActive()) {
+                setState(new SpawnRouteState());
+            } else {
+                setState(new IdleState());
+            }
         }
     }
 
@@ -86,5 +96,13 @@ public class BotContext {
     public long getModuleBase() { return moduleBase; }
     public WaypointManager getWaypointManager() { return waypointManager; }
     public PacketSender getPacketSender() { return packetSender; }
+    public RouteManager getRouteManager() { return routeManager; }
+    public void setRouteManager(RouteManager rm) { this.routeManager = rm; }
     public String getStateName() { return currentState.getClass().getSimpleName(); }
+    public String getRouteTargetName() {
+        if (currentState instanceof SpawnRouteState) {
+            return ((SpawnRouteState) currentState).getCurrentTargetName();
+        }
+        return null;
+    }
 }

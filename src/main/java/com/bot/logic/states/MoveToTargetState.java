@@ -2,10 +2,7 @@ package com.bot.logic.states;
 
 import com.bot.logic.BotContext;
 import com.bot.model.Entity;
-import com.bot.model.Vector3;
 import com.bot.constants.BotSettings;
-import com.bot.constants.GameConstants;
-
 
 public class MoveToTargetState implements BotState {
     private final Entity target;
@@ -14,8 +11,8 @@ public class MoveToTargetState implements BotState {
     private long enterTime = 0;
 
     private static final float INTERACTION_RANGE = 3.5f;
-    private static final long MOVE_INTERVAL_MS = 800;
-    private static final long MOVE_TIMEOUT_MS = 20000; 
+    private static final long MOVE_INTERVAL_MS = 500;
+    private static final long MOVE_TIMEOUT_MS = 20000;
 
     public MoveToTargetState(Entity target, boolean isMaterial) {
         this.target = target;
@@ -24,15 +21,16 @@ public class MoveToTargetState implements BotState {
 
     @Override
     public void execute(BotContext ctx) {
-        if (enterTime == 0) enterTime = System.currentTimeMillis();
+        if (enterTime == 0)
+            enterTime = System.currentTimeMillis();
 
         if (target == null) {
             ctx.setState(new IdleState());
             return;
         }
 
-        
-        if (System.currentTimeMillis() - enterTime > MOVE_TIMEOUT_MS) {
+        long now = System.currentTimeMillis();
+        if (now - enterTime > MOVE_TIMEOUT_MS) {
             log(String.format("[MOVE] Timeout ao mover para %s, blacklistando",
                     target.getName() != null ? target.getName() : "alvo"));
             ctx.blacklist(target.getBaseAddress());
@@ -40,9 +38,15 @@ public class MoveToTargetState implements BotState {
             return;
         }
 
-        target.calculateDistance(ctx.getPlayer());
+        
+        float px = ctx.getPlayer().getX();
+        float pz = ctx.getPlayer().getZ();
+        float dx = target.getX() - px;
+        float dz = target.getZ() - pz;
+        float distance = (float) Math.sqrt(dx * dx + dz * dz);
 
-        if (target.getDistance() <= INTERACTION_RANGE) {
+        if (distance <= INTERACTION_RANGE) {
+            ctx.getPlayer().resetSmoothMove();
             if (isMaterial) {
                 ctx.setState(new CollectionState(target));
             } else {
@@ -52,11 +56,23 @@ public class MoveToTargetState implements BotState {
         }
 
         
-        long now = System.currentTimeMillis();
+        boolean arrived = ctx.getPlayer().smoothWalkTo(ctx.getMemory(), ctx.getModuleBase(), ctx.getInput(),
+                ctx.getPacketSender(),
+                target.getX(), target.getY(), target.getZ(), 6.0f);
+
+        
         if (now - lastMoveTime >= MOVE_INTERVAL_MS) {
             lastMoveTime = now;
-            Vector3 dest = new Vector3(target.getX(), target.getY(), target.getZ());
-            ctx.getPlayer().clickToMove(ctx.getMemory(), ctx.getModuleBase(), dest);
+            ctx.getPacketSender().moveTowards(px, 0, pz, target.getX(), target.getY(), target.getZ(), 7.0f);
+        }
+
+        if (arrived) {
+            ctx.getPlayer().resetSmoothMove();
+            if (isMaterial) {
+                ctx.setState(new CollectionState(target));
+            } else {
+                ctx.setState(new CombatState());
+            }
         }
     }
 

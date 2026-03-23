@@ -1163,6 +1163,12 @@ public class EntityManager {
         return list;
     }
 
+    
+    public boolean isMaterialPresent(long baseAddress) {
+        int uid = (int) (baseAddress & 0x7FFFFFFFL);
+        return materialCache.containsKey(uid);
+    }
+
     public Entity getNearestMob() {
         return mobCache.values().stream()
                 .min(Comparator.comparingDouble(Entity::getDistance)).orElse(null);

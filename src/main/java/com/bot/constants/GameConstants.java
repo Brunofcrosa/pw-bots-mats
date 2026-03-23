@@ -18,9 +18,11 @@ public class GameConstants {
 
     public static final int OFFSET_ID = 0x190;
     public static final int OFFSET_TYPE = 0xB4;
+
+    
     public static final int OFFSET_X = 0x3C;
-    public static final int OFFSET_Z = 0x44;
     public static final int OFFSET_Y = 0x40;
+    public static final int OFFSET_Z = 0x44;
 
     public static final int TYPE_MATERIAL = 7;
     public static final int TYPE_MOB = 6;
@@ -41,11 +43,11 @@ public class GameConstants {
     }
 
     public static final int[] TEMPLATE_ID_PROBE_OFFSETS = {
-        OFFSET_MATTER_ID,
-        0x08, 0x0C, 0x10, 0x14,
-        OFFSET_TYPE,
-        0xB8, 0xBC,
-        OFFSET_ID
+            OFFSET_MATTER_ID,
+            0x08, 0x0C, 0x10, 0x14,
+            OFFSET_TYPE,
+            0xB8, 0xBC,
+            OFFSET_ID
     };
 
     public static final int SNAPSHOT_SCAN_SIZE = 800;

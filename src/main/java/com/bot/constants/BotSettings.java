@@ -6,6 +6,12 @@ public final class BotSettings {
     private static volatile boolean diagnosticLogsEnabled = false;
     private static volatile Consumer<String> uiLogSink;
 
+    
+    private static volatile boolean staticMode = false;
+
+    public static boolean isStaticMode() { return staticMode; }
+    public static void setStaticMode(boolean v) { staticMode = v; }
+
     private BotSettings() {
     }
 

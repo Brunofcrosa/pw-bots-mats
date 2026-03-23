@@ -2,28 +2,32 @@ package com.bot.logic.states;
 
 import com.bot.logic.BotContext;
 import com.bot.constants.GameConstants;
-import com.bot.constants.BotSettings;
-import com.bot.memory.PacketSender;
 import com.bot.model.Entity;
+import com.bot.logic.RouteManager;
 
 
 public class CollectionState implements BotState {
 
     private final Entity target;
-    private int phase = 0;  
+    private int phase = 0;
     private long phaseStartTime;
-    private int readTargetId = 0;
+    private int matterId = 0;
     private final float originalX, originalY, originalZ;
+    private int gatherAttempts = 0;
+    private long lastAttemptTime = 0;
+    private long lastMovePacketTime = 0;
+    private long lastLogTime = 0;
 
-    private static final long GATHER_TIMEOUT_MS  = 15000; 
-    private static final long SELECT_DELAY_MS    = 500;   
-    private static final long MIN_GATHER_TIME_MS = 3000;  
-    private static final long ENTITY_CHECK_MS    = 1000;  
-
-    public CollectionState() {
-        this.target = null;
-        this.originalX = 0; this.originalY = 0; this.originalZ = 0;
-    }
+    
+    private static final float GATHER_RANGE_M = 3.5f;
+    private static final long MOVE_TIMEOUT_MS = 30_000;
+    private static final long MOVE_PACKET_INTERVAL = 500; 
+    private static final long GATHER_TIMEOUT_MS = 40_000;
+    private static final long GATHER_RETRY_MS = 5_000;
+    private static final long MIN_GATHER_TIME_MS = 3_500;
+    private static final int MAX_GATHER_ATTEMPTS = 5;
+    private static final long POST_GATHER_BLACKLIST_MS = 12_000;
+    private static final float DEFAULT_RUN_SPEED = 7.0f;
 
     public CollectionState(Entity target) {
         this.target = target;
@@ -34,149 +38,183 @@ public class CollectionState implements BotState {
 
     @Override
     public void execute(BotContext ctx) {
-        PacketSender pkt = ctx.getPacketSender();
-
         if (target == null || target.getBaseAddress() == 0) {
-            log("[COLLECT] Sem alvo valido, voltando a idle");
-            ctx.setState(new IdleState());
+            toNext(ctx);
             return;
         }
 
-        if (pkt != null && pkt.isInitialized()) {
-            executeWithPackets(ctx, pkt);
-        } else {
-            executeFallback(ctx);
-        }
-    }
-
-    private void executeWithPackets(BotContext ctx, PacketSender pkt) {
         long now = System.currentTimeMillis();
 
         switch (phase) {
-            case 0: 
-                readTargetId = ctx.getMemory().readInt(target.getBaseAddress() + GameConstants.OFFSET_ID);
-                if (readTargetId != 0) {
-                    boolean ok = pkt.selectTarget(readTargetId);
-                    String name = target.getName() != null ? target.getName() : "?";
-                    
-                    
-                    
-                    boolean isMatterId = (readTargetId & 0xC0000000) == 0xC0000000;
-                    boolean isNpcId = (readTargetId & 0x80000000) != 0 && (readTargetId & 0x40000000) == 0;
-                    log(String.format("[COLLECT] Select %s id=%d (0x%X) %s dist=%.1fm %s",
-                            name, readTargetId, readTargetId,
-                            isMatterId ? "MATTER" : isNpcId ? "NPC" : "PLAYER",
-                            target.getDistance(),
-                            ok ? "OK" : "FALHOU"));
-                } else {
-                    log(String.format("[COLLECT] WARN: targetId=0 para addr=0x%X, abortando",
-                            target.getBaseAddress()));
+            case 0: { 
+                matterId = (target.getId() != 0) ? target.getId()
+                        : ctx.getMemory().readInt(target.getBaseAddress() + 0x110);
+                if (matterId == 0) {
                     ctx.blacklist(target.getBaseAddress());
-                    ctx.setState(new IdleState());
+                    toNext(ctx);
                     return;
                 }
+                float dist = currentDist(ctx);
+                log(String.format("[COLLECT] Iniciando coleta: mid=0x%X dist=%.1fm", matterId, dist));
+
+                if (dist > GATHER_RANGE_M) {
+                    ctx.getPlayer().resetSmoothMove();
+                    phase = 5;
+                    phaseStartTime = now;
+                } else {
+                    phase = 6;
+                }
+                break;
+            }
+
+            case 5: { 
+                float dist = currentDist(ctx);
+                if (dist <= GATHER_RANGE_M || now - phaseStartTime > MOVE_TIMEOUT_MS) {
+                    phase = 6;
+                    phaseStartTime = now;
+                    break;
+                }
+
+                
+                boolean arrived = ctx.getPlayer().smoothWalkTo(ctx.getMemory(), ctx.getModuleBase(), ctx.getInput(),
+                        ctx.getPacketSender(),
+                        originalX,
+                        originalY, originalZ, DEFAULT_RUN_SPEED);
+
+                
+                if (now - lastMovePacketTime >= MOVE_PACKET_INTERVAL) {
+                    lastMovePacketTime = now;
+                    float[] pp = readPlayerPos(ctx);
+                    ctx.getPacketSender().moveTowards(pp[0], pp[1], pp[2], originalX, originalY, originalZ,
+                            DEFAULT_RUN_SPEED);
+                }
+
+                if (now - lastLogTime > 2000) {
+                    lastLogTime = now;
+                    log(String.format("[COLLECT] Caminhando... dist=%.1fm", dist));
+                }
+
+                if (arrived) {
+                    phase = 6;
+                    phaseStartTime = now;
+                }
+                break;
+            }
+
+            case 6: { 
+                ctx.getPlayer().resetSmoothMove();
+                float[] pp = readPlayerPos(ctx);
+                ctx.getPacketSender().stopMove(pp[0], pp[1], pp[2], DEFAULT_RUN_SPEED);
+                log("[COLLECT] Parado. Sincronizando com servidor...");
+
+                
+                try {
+                    Thread.sleep(400);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+
                 phase = 1;
                 phaseStartTime = now;
+                gatherAttempts = 0;
+                lastAttemptTime = 0;
                 break;
+            }
 
-            case 1: 
-                if (now - phaseStartTime < SELECT_DELAY_MS) return;
-                if (readTargetId != 0) {
-                    boolean ok;
-                    boolean isMatterId = (readTargetId & 0xC0000000) == 0xC0000000;
-                    String name = target.getName() != null ? target.getName() : "?";
-
-                    if (isMatterId) {
-                        
-                        
-                        ok = pkt.gatherMaterial(readTargetId);
-                        log(String.format("[COLLECT] GatherMaterial %s (mid=%d) %s",
-                                name, readTargetId, ok ? "OK" : "FALHOU"));
-                    } else {
-                        
-                        
-                        ok = pkt.gatherMaterial(readTargetId);
-                        log(String.format("[COLLECT] GatherMaterial (NPC id) %s (nid=%d) %s",
-                                name, readTargetId, ok ? "OK" : "FALHOU"));
-                        if (!ok) {
-                            
-                            ok = pkt.startNpcDialogue(readTargetId);
-                            log(String.format("[COLLECT] Fallback NpcDialogue %s (nid=%d) %s",
-                                    name, readTargetId, ok ? "OK" : "FALHOU"));
-                        }
-                    }
-                    if (!ok) {
-                        log("[COLLECT] Falha na interacao, blacklistando");
-                        ctx.blacklist(target.getBaseAddress());
-                        ctx.setState(new IdleState());
-                        return;
-                    }
-                }
-                phase = 2;
-                phaseStartTime = now;
-                break;
-
-            case 2: 
-                long elapsed = now - phaseStartTime;
-
-                
-                if (elapsed > GATHER_TIMEOUT_MS) {
-                    log("[COLLECT] Timeout de coleta, blacklistando alvo");
+            case 1: { 
+                if (gatherAttempts >= MAX_GATHER_ATTEMPTS) {
                     ctx.blacklist(target.getBaseAddress());
-                    ctx.setState(new IdleState());
+                    toNext(ctx);
+                    return;
+                }
+                if (lastAttemptTime > 0 && now - lastAttemptTime < GATHER_RETRY_MS)
+                    return;
+
+                ctx.getPacketSender().cancelAction();
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+
+                boolean sent = ctx.getPacketSender().gatherMaterial(matterId);
+                log(String.format("[COLLECT] Enviando pacote de coleta #%d (mid=0x%X) sent=%b", gatherAttempts + 1,
+                        matterId, sent));
+
+                gatherAttempts++;
+                lastAttemptTime = now;
+                phase = 2;
+                break;
+            }
+
+            case 2: { 
+                long elapsed = now - phaseStartTime;
+                if (elapsed > GATHER_TIMEOUT_MS) {
+                    ctx.blacklist(target.getBaseAddress());
+                    toNext(ctx);
                     return;
                 }
 
-                
-                if (elapsed > MIN_GATHER_TIME_MS) {
-                    if (isEntityGone(ctx)) {
-                        log("[COLLECT] Coleta concluida! Entidade desapareceu da memoria");
-                        ctx.setState(new IdleState());
-                        return;
-                    }
+                if (elapsed > MIN_GATHER_TIME_MS && isEntityGone(ctx)) {
+                    log("[COLLECT] Sucesso! Item coletado.");
+                    ctx.blacklist(target.getBaseAddress(), POST_GATHER_BLACKLIST_MS);
+                    toNext(ctx);
+                    return;
                 }
+
+                if (now - lastAttemptTime >= GATHER_RETRY_MS)
+                    phase = 1;
                 break;
+            }
 
             default:
-                ctx.setState(new IdleState());
-                break;
+                toNext(ctx);
         }
     }
 
-    
+    private float[] readPlayerPos(BotContext ctx) {
+        long staticAddr = ctx.getModuleBase() + GameConstants.BASE_OFFSET;
+        long ptrLoc = ctx.getMemory().readPointerAddress(staticAddr, GameConstants.PLAYER_STRUCTURE_CHAIN);
+        if (ptrLoc != 0) {
+            long ps = ctx.getMemory().readInt(ptrLoc) & 0xFFFFFFFFL;
+            return new float[] {
+                    ctx.getMemory().readFloat(ps + GameConstants.OFFSET_X),
+                    ctx.getMemory().readFloat(ps + GameConstants.OFFSET_Y),
+                    ctx.getMemory().readFloat(ps + GameConstants.OFFSET_Z)
+            };
+        }
+        return new float[] { ctx.getPlayer().getX(), ctx.getPlayer().getY(), ctx.getPlayer().getZ() };
+    }
+
+    private float currentDist(BotContext ctx) {
+        float[] pp = readPlayerPos(ctx);
+        float dx = originalX - pp[0], dz = originalZ - pp[2];
+        return (float) Math.sqrt(dx * dx + dz * dz);
+    }
+
     private boolean isEntityGone(BotContext ctx) {
         try {
             long addr = target.getBaseAddress();
-            float x = ctx.getMemory().readFloat(addr + 0x3C);
-            float y = ctx.getMemory().readFloat(addr + 0x40);
-            float z = ctx.getMemory().readFloat(addr + 0x44);
-
-            
-            if (Float.isNaN(x) || Float.isNaN(y) || Float.isNaN(z)) return true;
-            if (x == 0f && y == 0f && z == 0f) return true;
-
-            
-            float dx = x - originalX;
-            float dy = y - originalY;
-            float dz = z - originalZ;
-            float moved = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (moved > 10.0f) return true;
-
-            return false;
+            if (ctx.getEntityManager() != null && !ctx.getEntityManager().isMaterialPresent(addr))
+                return true;
+            float x = ctx.getMemory().readFloat(addr + GameConstants.OFFSET_X);
+            return Float.isNaN(x) || x == 0f || Math.abs(x - originalX) > 5.0f;
         } catch (Exception e) {
-            return true; 
+            return true;
         }
     }
 
-    
-    private void executeFallback(BotContext ctx) {
-        ctx.getInput().sendKey(GameConstants.WINDOW_NAME, 0x46, 200);
-        try { Thread.sleep(3000); } catch (Exception ignored) {}
-        ctx.setState(new IdleState());
+    private void toNext(BotContext ctx) {
+        ctx.getPlayer().resetSmoothMove();
+        RouteManager rm = ctx.getRouteManager();
+        if (rm != null && rm.isRouteActive())
+            ctx.setState(new SpawnRouteState());
+        else
+            ctx.setState(new IdleState());
     }
 
     private void log(String msg) {
         System.out.println(msg);
-        BotSettings.logToUi(msg);
+        com.bot.constants.BotSettings.logToUi(msg);
     }
 }

@@ -2,6 +2,7 @@ package com.bot;
 
 import com.bot.logic.BotContext;
 import com.bot.logic.EntityManager;
+import com.bot.logic.RouteManager;
 import com.bot.logic.WaypointManager;
 import com.bot.model.Player;
 import com.bot.model.Entity;
@@ -43,6 +44,10 @@ public class Main {
         while (!memory.openProcess(GameConstants.WINDOW_NAME)) {
             try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
+        
+        
+        input.setGameHwnd(memory.getGameHwnd());
+        input.setGamePid(memory.getPid());
 
         long moduleBase = memory.getModuleBaseAddress(GameConstants.PROCESS_NAME);
         if (moduleBase == 0) {
@@ -71,6 +76,12 @@ public class Main {
         
         PacketSender packetSender = new PacketSender(memory);
         boolean pktReady = packetSender.initialize(moduleBase);
+        packetSender.setGamePid(memory.getPid()); 
+        packetSender.setGameHwnd(memory.getGameHwnd()); 
+
+        
+        BotSettings.setStaticMode(false);
+
         if (pktReady) {
             gui.log("[OK] PacketSender inicializado com sucesso.");
         } else {
@@ -82,7 +93,10 @@ public class Main {
         WaypointManager waypointManager = new WaypointManager(route);
         BotContext bot = new BotContext(memory, input, player, entityManager, moduleBase, waypointManager, packetSender);
 
-        
+        RouteManager routeManager = new RouteManager(resourceDb);
+        bot.setRouteManager(routeManager);
+        gui.setRouteManager(routeManager);
+
         gui.setOnBotToggle(running -> bot.setRunning(running));
 
         gui.log("[INFO] Bot acoplado com sucesso.");
@@ -99,9 +113,11 @@ public class Main {
                     final Entity nearestMob = entityManager.getNearestMob();
                     final List<Entity> materials = entityManager.getMaterials();
                     final String stateName = bot.getStateName();
+                    final String routeTarget = bot.getRouteTargetName();
 
                     SwingUtilities.invokeLater(() -> {
                         gui.updateUI(player, nearestMob, materials);
+                        gui.updateRoutePanel(routeManager, routeTarget);
                         if (bot.isRunning()) {
                             gui.updateBotStatus(stateName, materials.size());
                         }

@@ -230,6 +230,19 @@ public class ResourceDatabase {
         return Collections.unmodifiableList(allSpawns);
     }
 
+    public static Map<String, List<String>> getNamesByCategory() {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        Set<String> seen = new HashSet<>();
+        for (String[] tpl : TEMPLATES.values()) {
+            String name = tpl[0];
+            String cat = tpl[1];
+            if (seen.add(name)) {
+                result.computeIfAbsent(cat, k -> new ArrayList<>()).add(name);
+            }
+        }
+        return result;
+    }
+
     private static void log(String msg) {
         System.out.println(msg);
         BotSettings.logToUi(msg);
